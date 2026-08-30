@@ -1,0 +1,540 @@
+// ============================================================
+//  ⚡ COLAB PRO VPS — Dashboard Client Application
+// ============================================================
+
+(function () {
+  "use strict";
+
+  const $ = (s) => document.querySelector(s);
+  const $$ = (s) => document.querySelectorAll(s);
+
+  let authToken = localStorage.getItem('colab_auth_token') || null;
+  let autoScrollLogs = true;
+  let sseSource = null;
+  let currentStatus = null;
+
+  // ── Toast Notifications ──
+  function showToast(msg, isError = false) {
+    const toast = $('#toast');
+    toast.textContent = msg;
+    toast.style.borderColor = isError ? 'var(--danger)' : 'var(--primary)';
+    toast.style.display = 'block';
+    setTimeout(() => {
+      toast.style.display = 'none';
+    }, 3500);
+  }
+
+  // ── Formatters ──
+  function fmtDuration(sec) {
+    sec = Math.max(0, Math.floor(sec || 0));
+    const h = Math.floor(sec / 3600);
+    const m = Math.floor((sec % 3600) / 60);
+    const s = sec % 60;
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  }
+
+  function fmtHumanDuration(sec) {
+    sec = Math.max(0, Math.floor(sec || 0));
+    const h = Math.floor(sec / 3600);
+    const m = Math.floor((sec % 3600) / 60);
+    if (h > 0) return `${h}h ${m}m`;
+    if (m > 0) return `${m}m`;
+    return `${sec}s`;
+  }
+
+  function fmtBytes(b) {
+    if (!b && b !== 0) return '—';
+    if (b < 1024) return b + ' B';
+    if (b < 1048576) return (b / 1024).toFixed(0) + ' KB';
+    if (b < 1073741824) return (b / 1048576).toFixed(0) + ' MB';
+    return (b / 1073741824).toFixed(1) + ' GB';
+  }
+
+  // ── API Fetch Wrapper ──
+  async function api(path, method = 'GET', body = null) {
+    const headers = { 'Content-Type': 'application/json' };
+    if (authToken) {
+      headers['Authorization'] = `Bearer ${authToken}`;
+    }
+
+    const opts = { method, headers };
+    if (body) opts.body = JSON.stringify(body);
+
+    const res = await fetch(path, opts);
+    if (res.status === 401) {
+      handleUnauthorized();
+      throw new Error('Unauthorized');
+    }
+
+    const data = await res.json();
+    return data;
+  }
+
+  function handleUnauthorized() {
+    authToken = null;
+    localStorage.removeItem('colab_auth_token');
+    $('#dashboardView').style.display = 'none';
+    $('#loginView').style.display = 'flex';
+    if (sseSource) {
+      sseSource.close();
+      sseSource = null;
+    }
+  }
+
+  // ── Authentication ──
+  async function checkAuth() {
+    try {
+      const res = await api('/api/auth/check');
+      if (res && res.authenticated) {
+        showDashboard();
+      } else {
+        showLogin();
+      }
+    } catch (_) {
+      showLogin();
+    }
+  }
+
+  function showLogin() {
+    $('#dashboardView').style.display = 'none';
+    $('#loginView').style.display = 'flex';
+  }
+
+  function showDashboard() {
+    $('#loginView').style.display = 'none';
+    $('#dashboardView').style.display = 'block';
+    loadConfig();
+    loadStatus();
+    loadLogs();
+    connectSSE();
+  }
+
+  $('#loginForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const email = $('#loginEmail').value.trim();
+    const password = $('#loginPassword').value.trim();
+    const errBox = $('#loginError');
+    const submitBtn = $('#loginSubmitBtn');
+
+    errBox.style.display = 'none';
+    submitBtn.disabled = true;
+    submitBtn.innerHTML = '<span>Verifying...</span> ⏳';
+
+    try {
+      const res = await fetch('/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      });
+      const data = await res.json();
+
+      if (data.ok && data.token) {
+        authToken = data.token;
+        localStorage.setItem('colab_auth_token', authToken);
+        showDashboard();
+      } else {
+        errBox.textContent = data.error || 'Invalid credentials';
+        errBox.style.display = 'block';
+      }
+    } catch (err) {
+      errBox.textContent = 'Server connection error: ' + err.message;
+      errBox.style.display = 'block';
+    } finally {
+      submitBtn.disabled = false;
+      submitBtn.innerHTML = '<span>Sign In to Dashboard</span> ➔';
+    }
+  });
+
+  $('#quickFillBtn').addEventListener('click', () => {
+    $('#loginEmail').value = 'admin@colab.pro';
+    $('#loginPassword').value = 'password123';
+  });
+
+  $('#togglePasswordBtn').addEventListener('click', () => {
+    const pwInput = $('#loginPassword');
+    const btn = $('#togglePasswordBtn');
+    if (pwInput.type === 'password') {
+      pwInput.type = 'text';
+      btn.textContent = '🔒';
+    } else {
+      pwInput.type = 'password';
+      btn.textContent = '👁';
+    }
+  });
+
+  $('#logoutBtn').addEventListener('click', async () => {
+    try {
+      await api('/api/logout', 'POST');
+    } catch (_) {}
+    handleUnauthorized();
+    showToast('Logged out successfully');
+  });
+
+  // ── Dashboard Rendering ──
+  function renderStatus(st) {
+    if (!st) return;
+    currentStatus = st;
+
+    // Header & Status Badge
+    const badge = $('#masterStatusBadge');
+    const badgeText = $('#masterStatusText');
+
+    if (st.isRunning && st.isConnected) {
+      badge.className = 'status-badge connected';
+      badgeText.textContent = 'RUNNING · CONNECTED';
+    } else if (st.isRunning && !st.isConnected) {
+      badge.className = 'status-badge connecting';
+      badgeText.textContent = 'RUNNING · RECONNECTING';
+    } else {
+      badge.className = 'status-badge stopped';
+      badgeText.textContent = 'WORKER STOPPED';
+    }
+
+    $('#headerNotebookName').textContent = st.notebookTitle || st.notebookUrl || 'Colab Notebook';
+    $('#vpsUptimeText').textContent = fmtHumanDuration(st.vpsUptimeSec);
+    $('#headlessBadge').textContent = `Headless: ${st.headless ? 'ON' : 'OFF'}`;
+    $('#autoRunBadge').textContent = `Auto-Run: ${st.autoRunOnConnect ? 'ON' : 'OFF'}`;
+
+    // Metrics
+    $('#sessionTimerText').textContent = fmtDuration(st.sessionDurationSec);
+    $('#totalRuntimeText').textContent = fmtHumanDuration(st.totalSecondsRun);
+
+    if (st.sessionStartAt && st.isRunning) {
+      $('#sessionStartSub').textContent = `Started: ${new Date(st.sessionStartAt).toLocaleTimeString()}`;
+    } else {
+      $('#sessionStartSub').textContent = 'Worker idle / not running';
+    }
+
+    // Resources (RAM / Disk)
+    if (st.resources) {
+      const res = st.resources;
+      // RAM
+      if (res.memory) {
+        const mem = res.memory;
+        const pct = Math.round((mem.utilization || (mem.total ? 1 - mem.available / mem.total : 0)) * 100);
+        $('#ramDetailText').textContent = `${pct}% (${fmtBytes(mem.total - mem.available)} / ${fmtBytes(mem.total)})`;
+        const ramFill = $('#ramProgressFill');
+        ramFill.style.width = `${pct}%`;
+        ramFill.className = `progress-bar-fill ${pct > 85 ? 'danger' : pct > 65 ? 'warning' : ''}`;
+        $('#ramSubText').textContent = 'Live Google Compute Engine RAM';
+      }
+      // Disk
+      if (res.disk) {
+        const disk = res.disk;
+        const pct = Math.round((disk.utilization || (disk.total ? 1 - disk.available / disk.total : 0)) * 100);
+        $('#diskDetailText').textContent = `${pct}% (${fmtBytes(disk.total - disk.available)} / ${fmtBytes(disk.total)})`;
+        const diskFill = $('#diskProgressFill');
+        diskFill.style.width = `${pct}%`;
+        diskFill.className = `progress-bar-fill ${pct > 85 ? 'danger' : pct > 65 ? 'warning' : ''}`;
+        $('#diskSubText').textContent = 'Colab Local Storage';
+      }
+    } else {
+      $('#ramDetailText').textContent = '—';
+      $('#ramProgressFill').style.width = '0%';
+      $('#diskDetailText').textContent = '—';
+      $('#diskProgressFill').style.width = '0%';
+      $('#ramSubText').textContent = st.isRunning ? 'Waiting for runtime stats' : 'Worker stopped';
+      $('#diskSubText').textContent = st.isRunning ? 'Waiting for disk stats' : 'Worker stopped';
+    }
+
+    // Button states
+    $('#startWorkerBtn').disabled = st.isRunning;
+    $('#stopWorkerBtn').disabled = !st.isRunning;
+  }
+
+  // ── Logs Management ──
+  function appendLog(entry) {
+    const terminal = $('#terminalLogs');
+    const div = document.createElement('div');
+    div.className = `log-entry ${entry.level || 'info'}`;
+    div.textContent = `[${entry.timestamp || ''}] [${(entry.level || 'info').toUpperCase()}] ${entry.msg}`;
+
+    // Filter check
+    const filterText = $('#logFilterInput').value.trim().toLowerCase();
+    if (filterText && !div.textContent.toLowerCase().includes(filterText)) {
+      div.style.display = 'none';
+    }
+
+    terminal.appendChild(div);
+
+    if (autoScrollLogs) {
+      terminal.scrollTop = terminal.scrollHeight;
+    }
+  }
+
+  function renderAllLogs(logs) {
+    const terminal = $('#terminalLogs');
+    terminal.innerHTML = '';
+    if (!logs || logs.length === 0) {
+      terminal.innerHTML = '<div class="log-entry info">[System] No logs recorded yet.</div>';
+      return;
+    }
+    logs.forEach(appendLog);
+  }
+
+  $('#logFilterInput').addEventListener('input', (e) => {
+    const val = e.target.value.trim().toLowerCase();
+    $$('.log-entry').forEach((el) => {
+      el.style.display = !val || el.textContent.toLowerCase().includes(val) ? '' : 'none';
+    });
+  });
+
+  $('#clearLogsBtn').addEventListener('click', async () => {
+    try {
+      await api('/api/logs/clear', 'POST');
+      $('#terminalLogs').innerHTML = '<div class="log-entry info">[System] Logs cleared.</div>';
+      showToast('Logs cleared');
+    } catch (_) {}
+  });
+
+  $('#scrollToggleBtn').addEventListener('click', () => {
+    autoScrollLogs = !autoScrollLogs;
+    $('#scrollToggleBtn').style.opacity = autoScrollLogs ? '1' : '0.4';
+    showToast(autoScrollLogs ? 'Auto-scroll ON' : 'Auto-scroll OFF');
+  });
+
+  // ── Real-Time SSE Stream ──
+  function connectSSE() {
+    if (sseSource) sseSource.close();
+    sseSource = new EventSource('/api/events');
+
+    sseSource.addEventListener('init', (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        if (data.status) renderStatus(data.status);
+        if (data.logs) renderAllLogs(data.logs);
+      } catch (_) {}
+    });
+
+    sseSource.addEventListener('status', (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        renderStatus(data);
+      } catch (_) {}
+    });
+
+    sseSource.addEventListener('log', (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        appendLog(data);
+      } catch (_) {}
+    });
+
+    sseSource.onerror = () => {
+      // Reconnect after 4s
+      setTimeout(() => {
+        if (authToken) connectSSE();
+      }, 4000);
+    };
+  }
+
+  async function loadStatus() {
+    try {
+      const res = await api('/api/status');
+      if (res && res.ok) renderStatus(res.status);
+    } catch (_) {}
+  }
+
+  async function loadLogs() {
+    try {
+      const res = await api('/api/logs');
+      if (res && res.ok) renderAllLogs(res.logs);
+    } catch (_) {}
+  }
+
+  async function loadConfig() {
+    try {
+      const res = await api('/api/config');
+      if (res && res.ok && res.config) {
+        const c = res.config;
+        $('#configNotebookUrl').value = c.notebookUrl || '';
+        $('#configKeepalive').value = Math.round((c.keepaliveMs || 60000) / 1000);
+        $('#configRetry').value = Math.round((c.retryConnectMs || 10000) / 1000);
+        $('#configAutoRun').checked = c.autoRunOnConnect !== false;
+        $('#configHeadless').checked = c.headless !== false;
+      }
+    } catch (_) {}
+  }
+
+  // ── Worker Action Handlers ──
+  $('#startWorkerBtn').addEventListener('click', async () => {
+    $('#startWorkerBtn').disabled = true;
+    showToast('Starting Playwright worker...');
+    try {
+      const res = await api('/api/worker/start', 'POST');
+      if (res.ok) showToast('✅ Worker launched successfully');
+      else showToast('❌ ' + res.message, true);
+    } catch (e) {
+      showToast('❌ Start failed: ' + e.message, true);
+    }
+  });
+
+  $('#stopWorkerBtn').addEventListener('click', async () => {
+    if (!confirm('Are you sure you want to stop the 24/7 worker?')) return;
+    showToast('Stopping worker...');
+    try {
+      await api('/api/worker/stop', 'POST');
+      showToast('Worker stopped');
+    } catch (e) {
+      showToast('❌ Stop failed', true);
+    }
+  });
+
+  $('#restartWorkerBtn').addEventListener('click', async () => {
+    showToast('Restarting Playwright instance...');
+    try {
+      const res = await api('/api/worker/restart', 'POST');
+      if (res.ok) showToast('✅ Restarted successfully');
+      else showToast('❌ ' + res.message, true);
+    } catch (e) {
+      showToast('❌ Restart failed', true);
+    }
+  });
+
+  $('#runAllBtn').addEventListener('click', async () => {
+    showToast('⚡ Triggering Run All (Ctrl+F9)...');
+    try {
+      const res = await api('/api/worker/run-all', 'POST');
+      if (res.ok) showToast('✅ Run All command sent to Colab');
+      else showToast('❌ ' + (res.error || 'Failed to send keys'), true);
+    } catch (e) {
+      showToast('❌ Failed: ' + e.message, true);
+    }
+  });
+
+  $('#reconnectBtn').addEventListener('click', async () => {
+    showToast('🔌 Forcing Reconnect...');
+    try {
+      await api('/api/worker/reconnect', 'POST');
+      showToast('Reconnect signal sent');
+    } catch (_) {}
+  });
+
+  // ── Screenshot Modal ──
+  async function fetchScreenshot() {
+    const loading = $('#screenshotLoading');
+    const img = $('#screenshotImg');
+    loading.style.display = 'block';
+    img.style.display = 'none';
+
+    try {
+      const res = await fetch('/api/screenshot', {
+        headers: authToken ? { 'Authorization': `Bearer ${authToken}` } : {}
+      });
+      if (res.ok) {
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        img.src = url;
+        loading.style.display = 'none';
+        img.style.display = 'block';
+      } else {
+        loading.innerHTML = '<p style="color:var(--danger)">No active screenshot. (Worker may be stopped or initializing)</p>';
+      }
+    } catch (e) {
+      loading.innerHTML = `<p style="color:var(--danger)">Error: ${e.message}</p>`;
+    }
+  }
+
+  $('#viewScreenshotBtn').addEventListener('click', () => {
+    $('#screenshotModal').style.display = 'flex';
+    fetchScreenshot();
+  });
+
+  $('#refreshScreenshotBtn').addEventListener('click', fetchScreenshot);
+  $('#closeScreenshotModalBtn').addEventListener('click', () => {
+    $('#screenshotModal').style.display = 'none';
+  });
+
+  // ── Import JSON Modal ──
+  $('#importJsonModalBtn').addEventListener('click', () => {
+    $('#importModal').style.display = 'flex';
+  });
+
+  $('#closeImportModalBtn').addEventListener('click', () => {
+    $('#importModal').style.display = 'none';
+  });
+  $('#cancelImportBtn').addEventListener('click', () => {
+    $('#importModal').style.display = 'none';
+  });
+
+  $('#confirmImportBtn').addEventListener('click', async () => {
+    const raw = $('#importJsonTextarea').value.trim();
+    if (!raw) {
+      showToast('Please paste valid JSON', true);
+      return;
+    }
+    try {
+      const parsed = JSON.parse(raw);
+      const res = await api('/api/profile/import', 'POST', parsed);
+      if (res.ok) {
+        showToast('✅ Profile data imported into VPS!');
+        $('#importModal').style.display = 'none';
+        $('#importJsonTextarea').value = '';
+        loadConfig();
+      } else {
+        showToast('❌ Import error: ' + res.error, true);
+      }
+    } catch (e) {
+      showToast('❌ Invalid JSON syntax', true);
+    }
+  });
+
+  // ── Save Configuration ──
+  $('#configForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const notebookUrl = $('#configNotebookUrl').value.trim();
+    const keepaliveMs = parseInt($('#configKeepalive').value, 10) * 1000;
+    const retryConnectMs = parseInt($('#configRetry').value, 10) * 1000;
+    const autoRunOnConnect = $('#configAutoRun').checked;
+    const headless = $('#configHeadless').checked;
+
+    try {
+      const res = await api('/api/config', 'POST', {
+        notebookUrl,
+        keepaliveMs,
+        retryConnectMs,
+        autoRunOnConnect,
+        headless
+      });
+      if (res.ok) {
+        showToast('💾 Configuration saved!');
+      } else {
+        showToast('❌ ' + res.error, true);
+      }
+    } catch (err) {
+      showToast('❌ Save error: ' + err.message, true);
+    }
+  });
+
+  // ── Update Password ──
+  $('#passwordForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const newPassword = $('#newPasswordInput').value.trim();
+    if (!newPassword || newPassword.length < 6) {
+      showToast('Password must be at least 6 characters', true);
+      return;
+    }
+    try {
+      const res = await api('/api/auth/update', 'POST', { newPassword });
+      if (res.ok) {
+        showToast('🔐 Password updated successfully');
+        $('#newPasswordInput').value = '';
+      } else {
+        showToast('❌ ' + res.error, true);
+      }
+    } catch (err) {
+      showToast('❌ Failed: ' + err.message, true);
+    }
+  });
+
+  // Live Timer Tick
+  setInterval(() => {
+    if (currentStatus && currentStatus.isRunning && currentStatus.sessionStartAt) {
+      const sec = Math.floor((Date.now() - currentStatus.sessionStartAt) / 1000);
+      $('#sessionTimerText').textContent = fmtDuration(sec);
+    }
+  }, 1000);
+
+  // Init
+  document.addEventListener('DOMContentLoaded', checkAuth);
+})();

@@ -1,0 +1,19 @@
+{
+  "notebookUrl": "https://colab.research.google.com/drive/1rbcpyiaEneeLuqpczvYaJn3soEFR7LkQ",
+  "port": 3000,
+  "headless": true,
+  "keepaliveMs": 60000,
+  "retryConnectMs": 10000,
+  "waitAfterConnectMs": 6000,
+  "autoRunOnConnect": true,
+  "autoStart": true,
+  "auth": {
+    "email": "admin@colab.pro",
+    "password": "password123"
+  },
+  "profile": {
+    "proxyUrl": "",
+    "token": "",
+    "notebookId": ""
+  }
+}

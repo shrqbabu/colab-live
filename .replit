@@ -1,0 +1,12 @@
+run = "node playwright/colab-live.js"
+entrypoint = "playwright/colab-live.js"
+modules = ["nodejs-20"]
+ 
+[env]
+HEADLESS = "true"
+[nix]
+channel = "stable-24_05"
+ 
+[deployment]
+run = ["sh", "-c", "node playwright/colab-live.js"]
+deploymentTarget = "cloudrun"

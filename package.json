@@ -1,0 +1,15 @@
+{
+  "name": "colab-24-7-vps-manager",
+  "version": "2.0.0",
+  "description": "Google Colab 24/7 VPS Automation & Web Dashboard with Playwright, Keep-Alive, Auto-Reconnect & Remote Controls",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "vps": "pm2 start ecosystem.config.js",
+    "login": "node colab-login.js",
+    "install-browser": "npx playwright install chromium"
+  },
+  "dependencies": {
+    "playwright": "^1.48.0"
+  }
+}
