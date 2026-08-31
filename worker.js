@@ -124,14 +124,28 @@ class ColabWorker extends EventEmitter {
         return p;
       }
     }
+
+    if (process.platform === 'linux') {
+      try {
+        const { execSync } = require('child_process');
+        const found = execSync('which chromium || which chromium-browser || which google-chrome || which google-chrome-stable', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+        if (found && fs.existsSync(found)) {
+          this.log(`Found system Chromium via PATH at: ${found}`, 'info');
+          return found;
+        }
+      } catch (_) {}
+    }
+
     // Fall back to Playwright's bundled FULL Chromium (not headless-shell —
     // yeh full chromium hai jo headless mode bhi chala sakta hai, aur
     // chrome-headless-shell ki alag download ki zaroorat khatam karta hai)
-    const bundled = chromium.executablePath();
-    if (bundled && fs.existsSync(bundled)) {
-      this.log(`Using bundled Chromium at: ${bundled}`, 'info');
-      return bundled;
-    }
+    try {
+      const bundled = chromium.executablePath();
+      if (bundled && fs.existsSync(bundled)) {
+        this.log(`Using bundled Chromium at: ${bundled}`, 'info');
+        return bundled;
+      }
+    } catch (_) {}
     return undefined;
   }
 
