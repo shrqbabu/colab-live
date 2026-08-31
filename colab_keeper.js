@@ -62,11 +62,32 @@ let lastDialogActionAt = 0;
     ? ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu']
     : ['--start-maximized'];
 
-  const context = await chromium.launchPersistentContext(USER_DATA_DIR, {
+  // Full Chromium use karo (headless-shell nahi) — chrome-headless-shell alag
+  // download hoti hai jo Replit build mein missing ho jaati hai. Full chromium
+  // headless mode bhi chala sakta hai, isliye stable hai.
+  let execPath = process.env.PLAYWRIGHT_EXECUTABLE_PATH;
+  if (!execPath) {
+    const candidates = isLinux
+      ? ['/usr/bin/chromium', '/usr/bin/google-chrome', '/nix/var/nix/profiles/default/bin/chromium']
+      : [];
+    for (const p of candidates) {
+      if (fs.existsSync(p)) { execPath = p; break; }
+    }
+  }
+  if (!execPath) {
+    const bundled = chromium.executablePath();
+    if (bundled && fs.existsSync(bundled)) execPath = bundled;
+  }
+  if (execPath) log(`Using Chromium: ${execPath}`);
+
+  const launchOpts = {
     headless: HEADLESS,
     viewport: null,
     args: launchArgs,
-  });
+  };
+  if (execPath) launchOpts.executablePath = execPath;
+
+  const context = await chromium.launchPersistentContext(USER_DATA_DIR, launchOpts);
 
   const page = context.pages()[0] || (await context.newPage());
 
@@ -102,6 +123,26 @@ let lastDialogActionAt = 0;
     const now = Date.now();
     if (now - lastDialogActionAt < 6000) return null; // throttle: 6s
     lastDialogActionAt = now;
+
+    // 1) Playwright locator — shadow DOM pierce karta hai (sabse reliable)
+    try {
+      const driveBtn = page.getByText('Connect to Google Drive', { exact: false });
+      if (await driveBtn.count()) {
+        await driveBtn.first().click({ timeout: 3000 });
+        log('Drive auth: clicked Connect to Google Drive');
+        await page.waitForTimeout(1800);
+        return 'drive-connect';
+      }
+      const noThanks = page.getByText('No thanks', { exact: false });
+      if (await noThanks.count()) {
+        await noThanks.first().click({ timeout: 3000 });
+        log('Dialog: clicked No thanks');
+        await page.waitForTimeout(1000);
+        return 'dialog-dismiss';
+      }
+    } catch (e) {
+      log('Dialog locator click error:', e.message);
+    }
 
     const action = await page
       .evaluate(() => {

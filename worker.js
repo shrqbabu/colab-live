@@ -124,7 +124,14 @@ class ColabWorker extends EventEmitter {
         return p;
       }
     }
-    // Fall back to Playwright's bundled executable
+    // Fall back to Playwright's bundled FULL Chromium (not headless-shell —
+    // yeh full chromium hai jo headless mode bhi chala sakta hai, aur
+    // chrome-headless-shell ki alag download ki zaroorat khatam karta hai)
+    const bundled = chromium.executablePath();
+    if (bundled && fs.existsSync(bundled)) {
+      this.log(`Using bundled Chromium at: ${bundled}`, 'info');
+      return bundled;
+    }
     return undefined;
   }
 
@@ -365,6 +372,27 @@ class ColabWorker extends EventEmitter {
     if (now - this._lastDialogActionAt < 6000) return; // throttle: 6s
     this._lastDialogActionAt = now;
 
+    // 1) Playwright locator — shadow DOM pierce karta hai (sabse reliable)
+    try {
+      const driveBtn = this.page.getByText('Connect to Google Drive', { exact: false });
+      if (await driveBtn.count()) {
+        await driveBtn.first().click({ timeout: 3000 });
+        this.log('Drive auth: clicked Connect to Google Drive', 'info');
+        await this.sleep(1800);
+        return;
+      }
+      const noThanks = this.page.getByText('No thanks', { exact: false });
+      if (await noThanks.count()) {
+        await noThanks.first().click({ timeout: 3000 });
+        this.log('Dialog: clicked No thanks', 'info');
+        await this.sleep(1000);
+        return;
+      }
+    } catch (e) {
+      this.log(`Dialog locator click error: ${e.message}`, 'warn');
+    }
+
+    // 2) JS fallback through shadow DOM
     const action = await this.page.evaluate(() => {
       const clickLabel = (root, labels) => {
         const els = root.querySelectorAll('button, mwc-button, paper-button, [role="button"], jupyter-button');
@@ -599,13 +627,16 @@ class ColabWorker extends EventEmitter {
     // 2) Warna temp persistent context kholo taaki cookies profile/ mein save ho jayein
     try {
       const isLinux = process.platform === 'linux';
-      const tmp = await chromium.launchPersistentContext(this.userDataDir, {
+      const execPath = this._detectExecutablePath();
+      const launchOpts = {
         headless: true,
         viewport: { width: 1280, height: 800 },
         args: isLinux
           ? ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu']
           : ['--start-maximized'],
-      });
+      };
+      if (execPath) launchOpts.executablePath = execPath;
+      const tmp = await chromium.launchPersistentContext(this.userDataDir, launchOpts);
       try {
         await tmp.addCookies(pwCookies);
         const page = tmp.pages()[0] || (await tmp.newPage());
