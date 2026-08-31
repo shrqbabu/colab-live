@@ -1,12 +1,17 @@
-run = "node playwright/colab-live.js"
-entrypoint = "playwright/colab-live.js"
-modules = ["nodejs-20"]
- 
+run = "node colab-live/server.js"
+modules = ["nodejs-24"]
+
 [env]
 HEADLESS = "true"
+
 [nix]
 channel = "stable-24_05"
- 
+
 [deployment]
-run = ["sh", "-c", "node playwright/colab-live.js"]
+build = ["sh", "-c", "npx playwright install chromium"]
+run = ["sh", "-c", "node colab-live/server.js"]
 deploymentTarget = "cloudrun"
+
+[[ports]]
+localPort = 3000
+externalPort = 80

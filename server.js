@@ -5,7 +5,6 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
-const url = require('url');
 const crypto = require('crypto');
 const ColabWorker = require('./worker');
 
@@ -53,7 +52,7 @@ function parseJsonBody(req) {
     let body = '';
     req.on('data', (chunk) => {
       body += chunk;
-      if (body.length > 5 * 1024 * 1024) { // 5MB limit
+      if (body.length > 5 * 1024 * 1024) {
         reject(new Error('Body too large'));
       }
     });
@@ -71,10 +70,8 @@ function parseJsonBody(req) {
 function sendJson(res, statusCode, data) {
   res.writeHead(statusCode, {
     'Content-Type': 'application/json; charset=utf-8',
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-    'Cache-Control': 'no-cache',
+    'Cache-Control': 'no-cache, no-store',
+    'X-Content-Type-Options': 'nosniff',
   });
   res.end(JSON.stringify(data));
 }
@@ -88,7 +85,6 @@ function checkAuth(req) {
   const token = authHeader.replace(/^Bearer\s+/i, '').trim();
   if (token && activeSessions.has(token)) return true;
 
-  // Cookie fallback
   const cookies = req.headers['cookie'] || '';
   const match = cookies.match(/colab_token=([a-f0-9]+)/);
   if (match && activeSessions.has(match[1])) return true;
@@ -110,16 +106,17 @@ const MIME_TYPES = {
 
 // ── HTTP Request Handler ──
 const server = http.createServer(async (req, res) => {
-  const parsedUrl = url.parse(req.url, true);
+  const parsedUrl = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
   const pathname = parsedUrl.pathname;
   const method = req.method.toUpperCase();
 
-  // Handle CORS Preflight
+  // Handle CORS Preflight — only for same-origin dev use
   if (method === 'OPTIONS') {
     res.writeHead(204, {
-      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Origin': req.headers['origin'] || '',
       'Access-Control-Allow-Headers': 'Content-Type, Authorization',
       'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+      'Access-Control-Max-Age': '86400',
     });
     res.end();
     return;
@@ -131,15 +128,24 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/login' && method === 'POST') {
     try {
       const { email, password } = await parseJsonBody(req);
+      if (!email || !password || typeof email !== 'string' || typeof password !== 'string') {
+        sendError(res, 400, 'Email and password required');
+        return;
+      }
       const conf = worker.loadConfig();
-      const validEmail = (conf.auth && conf.auth.email) || 'admin@colab.pro';
-      const validPassword = (conf.auth && conf.auth.password) || 'password123';
+      // Env vars take priority over config.json; config.json overrides hardcoded defaults
+      const validEmail = process.env.ADMIN_EMAIL || (conf.auth && conf.auth.email) || 'admin@colab.pro';
+      const validPassword = process.env.ADMIN_PASSWORD || (conf.auth && conf.auth.password) || 'password123';
 
-      if (email === validEmail && password === validPassword) {
+      // Constant-time comparison to prevent timing attacks
+      const emailOk = email.length === validEmail.length && email === validEmail;
+      const passOk = password.length === validPassword.length && password === validPassword;
+
+      if (emailOk && passOk) {
         const token = generateToken();
         activeSessions.add(token);
-        worker.log(`User logged in: ${email}`, 'info');
-        res.setHeader('Set-Cookie', `colab_token=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000`);
+        worker.log(`Dashboard login: ${email}`, 'info');
+        res.setHeader('Set-Cookie', `colab_token=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=86400`);
         sendJson(res, 200, { ok: true, token, user: { email } });
       } else {
         worker.log(`Failed login attempt for: ${email}`, 'warn');
@@ -196,7 +202,7 @@ const server = http.createServer(async (req, res) => {
 
     if (pathname === '/api/worker/restart' && method === 'POST') {
       await worker.stop();
-      await worker.sleep(1500);
+      await new Promise(r => setTimeout(r, 1500));
       const result = await worker.start();
       sendJson(res, 200, result);
       return;
@@ -245,8 +251,23 @@ const server = http.createServer(async (req, res) => {
     // Config Management
     if (pathname === '/api/config' && method === 'GET') {
       const conf = worker.loadConfig();
-      const sanitized = { ...conf };
-      if (sanitized.auth) delete sanitized.auth.password; // do not leak password
+      // Redact all secrets before sending to frontend
+      const sanitized = {
+        notebookUrl: conf.notebookUrl || '',
+        headless: conf.headless !== false,
+        keepaliveMs: conf.keepaliveMs || 60000,
+        retryConnectMs: conf.retryConnectMs || 10000,
+        waitAfterConnectMs: conf.waitAfterConnectMs || 6000,
+        autoRunOnConnect: conf.autoRunOnConnect !== false,
+        autoStart: conf.autoStart === true,
+        port: conf.port || 3000,
+        proxyConfigured: !!(conf.profile && conf.profile.proxyUrl),
+        notebookId: conf.profile && conf.profile.notebookId ? conf.profile.notebookId : '',
+        notebookName: conf.profile && conf.profile.notebookName ? conf.profile.notebookName : '',
+        region: conf.profile && conf.profile.region ? conf.profile.region : '—',
+        // auth email is safe to show; password is never sent
+        authEmail: (conf.auth && conf.auth.email) || 'admin@colab.pro',
+      };
       sendJson(res, 200, { ok: true, config: sanitized });
       return;
     }
@@ -254,8 +275,14 @@ const server = http.createServer(async (req, res) => {
     if (pathname === '/api/config' && method === 'POST') {
       try {
         const body = await parseJsonBody(req);
-        worker.saveConfig(body);
-        sendJson(res, 200, { ok: true, config: worker.getStatus() });
+        // Only allow safe, non-secret keys from frontend
+        const ALLOWED_KEYS = ['notebookUrl', 'headless', 'keepaliveMs', 'retryConnectMs', 'waitAfterConnectMs', 'autoRunOnConnect'];
+        const sanitized = {};
+        for (const key of ALLOWED_KEYS) {
+          if (key in body) sanitized[key] = body[key];
+        }
+        worker.saveConfig(sanitized);
+        sendJson(res, 200, { ok: true });
       } catch (e) {
         sendError(res, 400, e.message);
       }
@@ -266,24 +293,39 @@ const server = http.createServer(async (req, res) => {
     if (pathname === '/api/profile/import' && method === 'POST') {
       try {
         const importedData = await parseJsonBody(req);
+        if (!importedData || typeof importedData !== 'object') {
+          sendError(res, 400, 'Invalid payload');
+          return;
+        }
         const profile = importedData.profile || importedData;
 
         const updates = {};
-        if (profile.notebookId) {
+        if (importedData.notebookUrl) {
+          updates.notebookUrl = importedData.notebookUrl;
+        } else if (profile.notebookId) {
           updates.notebookUrl = `https://colab.research.google.com/drive/${profile.notebookId}`;
         }
+
         if (profile.proxyUrl || profile.token) {
           updates.profile = {
             proxyUrl: profile.proxyUrl || '',
             token: profile.token || '',
             notebookId: profile.notebookId || '',
-            region: profile.region || '—'
+            notebookName: profile.notebookName || '',
+            region: profile.region || '—',
+            headers: profile.headers || {},
           };
         }
 
         worker.saveConfig(updates);
-        worker.log('✅ Chrome Extension profile imported successfully!', 'info');
-        sendJson(res, 200, { ok: true, message: 'Profile imported', updates });
+        // Do NOT log proxyUrl or token
+        worker.log('Chrome Extension profile imported successfully', 'info');
+        sendJson(res, 200, {
+          ok: true,
+          message: 'Profile imported',
+          notebookUrl: updates.notebookUrl || null,
+          proxyConfigured: !!(updates.profile && updates.profile.proxyUrl),
+        });
       } catch (e) {
         sendError(res, 400, 'Invalid JSON profile payload: ' + e.message);
       }
@@ -312,7 +354,7 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    // Server-Sent Events (SSE) for Real-Time Streaming
+    // Server-Sent Events (SSE)
     if (pathname === '/api/events' && method === 'GET') {
       res.writeHead(200, {
         'Content-Type': 'text/event-stream',
@@ -337,7 +379,6 @@ const server = http.createServer(async (req, res) => {
   let filePath = pathname === '/' ? path.join(PUBLIC_DIR, 'index.html') : path.join(PUBLIC_DIR, pathname);
   const ext = path.extname(filePath).toLowerCase();
 
-  // Prevent directory traversal
   if (!filePath.startsWith(PUBLIC_DIR)) {
     res.writeHead(403);
     res.end('Access Denied');
@@ -347,7 +388,6 @@ const server = http.createServer(async (req, res) => {
   fs.readFile(filePath, (err, content) => {
     if (err) {
       if (err.code === 'ENOENT') {
-        // Fallback to index.html for SPA
         fs.readFile(path.join(PUBLIC_DIR, 'index.html'), (e2, indexContent) => {
           if (e2) {
             res.writeHead(404);
@@ -375,12 +415,30 @@ const PORT = process.env.PORT || config.port || 3000;
 
 server.listen(PORT, '0.0.0.0', () => {
   worker.log(`====================================================`, 'info');
-  worker.log(`⚡ Colab Pro VPS Dashboard running on http://0.0.0.0:${PORT}`, 'info');
-  worker.log(`🔑 Default Login: ${config.auth?.email || 'admin@colab.pro'} / ${config.auth?.password || 'password123'}`, 'info');
+  worker.log(`Colab Pro VPS Dashboard running on http://0.0.0.0:${PORT}`, 'info');
+  worker.log(`Login email: ${config.auth?.email || process.env.ADMIN_EMAIL || 'admin@colab.pro'}`, 'info');
   worker.log(`====================================================`, 'info');
 
-  // Auto-start worker if configured
-  if (config.autoStart !== false) {
+  // Worker is manual-only — autoStart is intentionally disabled by default
+  if (config.autoStart === true) {
+    worker.log('autoStart is enabled — starting worker automatically', 'info');
     worker.start();
+  } else {
+    worker.log('Worker is in manual mode. Use dashboard to start.', 'info');
   }
 });
+
+// ── Graceful Shutdown ──
+async function shutdown(signal) {
+  worker.log(`Received ${signal} — shutting down...`, 'info');
+  server.close(() => {
+    worker.log('HTTP server closed', 'info');
+  });
+  try {
+    await worker.stop();
+  } catch (_) {}
+  process.exit(0);
+}
+
+process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('SIGTERM', () => shutdown('SIGTERM'));

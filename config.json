@@ -6,7 +6,7 @@
   "retryConnectMs": 10000,
   "waitAfterConnectMs": 6000,
   "autoRunOnConnect": true,
-  "autoStart": true,
+  "autoStart": false,
   "auth": {
     "email": "admin@colab.pro",
     "password": "password123"

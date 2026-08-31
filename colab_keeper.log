@@ -12,3 +12,20 @@
 ║                                                            ║
 ║ <3 Playwright Team                                         ║
 ╚════════════════════════════════════════════════════════════╝
+[10:16:21 AM] [INFO] Found system Chromium at: C:\Program Files\Google\Chrome\Application\chrome.exe
+[10:16:26 AM] [INFO] ====================================================
+[10:16:27 AM] [INFO] Colab Pro VPS Dashboard running on http://0.0.0.0:3000
+[10:16:27 AM] [INFO] Login email: admin@colab.pro
+[10:16:27 AM] [INFO] ====================================================
+[10:16:27 AM] [INFO] Worker is in manual mode. Use dashboard to start.
+[10:16:53 AM] [INFO] Dashboard login: admin@colab.pro
+[10:17:20 AM] [INFO] Dashboard login: admin@colab.pro
+[10:17:21 AM] [INFO] Starting Playwright (HEADLESS mode)...
+[10:17:21 AM] [INFO] Found system Chromium at: C:\Program Files\Google\Chrome\Application\chrome.exe
+[10:17:21 AM] [INFO] Using Chromium executable: C:\Program Files\Google\Chrome\Application\chrome.exe
+[10:17:22 AM] [INFO] Navigating to notebook...
+[10:17:30 AM] [INFO] Notebook loaded: Sign in - Google Accounts
+[10:17:30 AM] [INFO] Runtime state: LOGIN_REQUIRED (google-accounts-url)
+[10:17:30 AM] [WARN] Google login required — cannot auto-login. Manual action needed.
+[10:17:36 AM] [INFO] Stopping Colab worker...
+[10:17:36 AM] [INFO] Worker stopped cleanly
