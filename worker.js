@@ -33,6 +33,8 @@ class ColabWorker extends EventEmitter {
     this.logFile = path.join(this.baseDir, 'colab_keeper.log');
     this._startLock = false;
     this._reconnectLock = false;
+    this._lastConnectClickAt = 0;
+    this._lastDialogActionAt = 0;
   }
 
   loadConfig() {
@@ -310,37 +312,96 @@ class ColabWorker extends EventEmitter {
   // ─── Attempt reconnect (only call when genuinely disconnected) ──
   async attemptReconnect() {
     if (!this.page || this.page.isClosed()) return false;
-    this.log('Attempting reconnect via connect button...', 'info');
-    try {
-      const clicked = await this.page.evaluate(() => {
-        // Try colab-reconnect-button first
-        const rc = document.querySelector('colab-reconnect-button');
-        if (rc && rc.shadowRoot) {
-          const b = rc.shadowRoot.querySelector('button, connect, #connect');
-          if (b) { b.click(); return 'reconnect-button'; }
-        }
-        // Try top toolbar connect button
-        const tb = document.querySelector('#top-toolbar > colab-connect-button, colab-connect-button');
-        if (tb && tb.shadowRoot) {
-          const b = tb.shadowRoot.querySelector('mwc-button, button, connect, #connect');
-          if (b) { b.click(); return 'connect-top'; }
-        }
-        // DOM fallback
-        const normalBtn = document.querySelector('#connect, .colab-connect-button');
-        if (normalBtn) { normalBtn.click(); return 'connect-fallback'; }
-        return null;
-      }).catch(() => null);
+    this.log('Attempting connect via connect button...', 'info');
+    return this.clickConnectButton();
+  }
 
-      if (clicked) {
-        this.log(`Reconnect click sent (${clicked})`, 'info');
+  // Robust, throttled click on the Colab connect button (pierces shadow DOM)
+  async clickConnectButton() {
+    if (!this.page || this.page.isClosed()) return false;
+    const now = Date.now();
+    if (now - this._lastConnectClickAt < 8000) return false; // throttle: 8s
+    this._lastConnectClickAt = now;
+
+    // 1) Playwright locator — pierces open shadow roots (most reliable)
+    try {
+      const host = this.page.locator('#top-toolbar colab-connect-button, colab-connect-button').first();
+      if (await host.count()) {
+        const inner = host.locator('mwc-button, button').filter({ hasText: /connect|reconnect/i }).first();
+        if (await inner.count()) {
+          await inner.click({ timeout: 4000 });
+          this.log('Connect button clicked (shadow locator)', 'info');
+          return true;
+        }
+        await host.click({ timeout: 4000 });
+        this.log('Connect button clicked (host element)', 'info');
         return true;
-      } else {
-        this.log('Reconnect: no clickable connect button found', 'warn');
-        return false;
       }
     } catch (e) {
-      this.log(`Reconnect error: ${e.message}`, 'warn');
+      this.log(`Connect click (locator) error: ${e.message}`, 'warn');
+    }
+
+    // 2) JS fallback through shadow DOM
+    const clicked = await this.page.evaluate(() => {
+      const hosts = document.querySelectorAll('#top-toolbar colab-connect-button, colab-connect-button');
+      for (const host of hosts) {
+        const root = host.shadowRoot || host;
+        const btns = root.querySelectorAll('mwc-button, button, [role="button"]');
+        for (const b of btns) {
+          if (/connect|reconnect/i.test(b.textContent || '')) { b.click(); return true; }
+        }
+      }
       return false;
+    }).catch(() => false);
+
+    if (clicked) this.log('Connect button clicked (JS fallback)', 'info');
+    return clicked;
+  }
+
+  // Dismiss Colab modal dialogs / authorization prompts that block the runtime
+  async dismissDialogs() {
+    if (!this.page || this.page.isClosed()) return;
+    const now = Date.now();
+    if (now - this._lastDialogActionAt < 6000) return; // throttle: 6s
+    this._lastDialogActionAt = now;
+
+    const action = await this.page.evaluate(() => {
+      const clickLabel = (root, labels) => {
+        const els = root.querySelectorAll('button, mwc-button, paper-button, [role="button"], jupyter-button');
+        for (const el of els) {
+          const t = (el.textContent || '').trim().toLowerCase();
+          if (!t) continue;
+          if (labels.some(l => t.includes(l))) { el.click(); return true; }
+        }
+        return false;
+      };
+
+      // Dialog containers — real <dialog> or Colab custom elements
+      const containers = document.querySelectorAll(
+        'dialog, colab-dialog, mwc-dialog, .goog-modal-dialog, [role="dialog"], colab-file-dialog'
+      );
+
+      // Prefer authorizing Drive, then any positive action
+      for (const c of containers) {
+        if (clickLabel(c, ['connect to google drive', 'allow', 'authorize'])) return 'drive-connect';
+      }
+      for (const c of containers) {
+        if (clickLabel(c, ['no thanks', 'cancel', 'dismiss', 'close', 'skip'])) return 'dialog-dismiss';
+      }
+
+      // Dismiss modal backdrop if a dialog is open but no matching button found
+      for (const c of containers) {
+        if (c.open && c.parentElement) {
+          const back = c.parentElement.querySelector('.modal-backdrop, .backdrop, modal-backdrop');
+          if (back) { back.click(); return 'backdrop-dismiss'; }
+        }
+      }
+      return null;
+    }).catch(() => null);
+
+    if (action) {
+      this.log(`Attempted dialog action: ${action}`, 'info');
+      await this.sleep(1200);
     }
   }
 
@@ -351,6 +412,9 @@ class ColabWorker extends EventEmitter {
         const stateResult = await this.getRuntimeState();
         this.runtimeState = stateResult;
         this.log(`Runtime state: ${stateResult.state} (${stateResult.reason})`, 'info');
+
+        // Always try to clear any blocking dialogs (Drive auth, modals, toasts)
+        await this.dismissDialogs();
 
         if (stateResult.state === 'CONNECTED') {
           this.isConnected = true;
@@ -395,7 +459,11 @@ class ColabWorker extends EventEmitter {
 
         } else if (stateResult.state === 'LOADING') {
           this.isConnected = false;
-          this.log('Runtime is loading/initializing...', 'info');
+          // If we've never connected this session and connect button is present,
+          // actively click it to start the runtime instead of just waiting.
+          if (!this.ranForThisConnection) {
+            await this.clickConnectButton();
+          }
           this.emit('status_change', this.getStatus());
           await this.sleep(8000);
 
@@ -471,6 +539,89 @@ class ColabWorker extends EventEmitter {
       return { ok, message: ok ? 'Reconnect signal sent' : 'No connect button found' };
     } finally {
       this._reconnectLock = false;
+    }
+  }
+
+  // ─── Import Google session cookies (Cookie-Editor JSON) into the profile ──
+  // Ye cookies profile/ mein persist hote hain taaki worker/keeper login na maange.
+  async importCookies(input) {
+    let raw = input;
+    if (!Array.isArray(raw) && raw && Array.isArray(raw.cookies)) raw = raw.cookies;
+    if (!Array.isArray(raw)) {
+      return { ok: false, error: 'Invalid cookies payload — expected an array of cookie objects' };
+    }
+
+    const mapSameSite = (v) => {
+      const s = (v || '').toLowerCase();
+      if (s === 'no_restriction') return 'None';
+      if (s === 'strict') return 'Strict';
+      return 'Lax';
+    };
+
+    const pwCookies = raw
+      .filter((c) => c && c.name && c.value !== undefined)
+      .map((c) => {
+        const cookie = {
+          name: c.name,
+          value: c.value,
+          domain: c.domain && c.domain.startsWith('.') ? c.domain : (c.domain ? '.' + c.domain.replace(/^\.+/, '') : '.google.com'),
+          path: c.path || '/',
+          httpOnly: !!c.httpOnly,
+          secure: !!c.secure,
+        };
+        if (c.expirationDate && c.expirationDate > 0) cookie.expires = Math.floor(c.expirationDate);
+        cookie.sameSite = mapSameSite(c.sameSite);
+        return cookie;
+      });
+
+    if (!pwCookies.length) {
+      return { ok: false, error: 'No usable cookies found' };
+    }
+
+    // 1) Agar worker ka browser context pehle se khula hai — usi mein inject karo
+    //    (persistent context ke liye addCookies profile/ mein persist bhi hota hai)
+    if (this.context) {
+      try {
+        await this.context.addCookies(pwCookies);
+        this.log(`Injected ${pwCookies.length} Google cookies into running session`, 'info');
+        // Session fresh karne ke liye notebook page reload karo, phir verify karo
+        const target = this.config.notebookUrl || 'https://colab.research.google.com/';
+        await this.page.goto(target, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+        await this.page.waitForTimeout(4000);
+        const valid = !(this.page.url() || '').includes('accounts.google.com');
+        this.log(`Running-session cookies ${valid ? 'VALID ✓' : 'EXPIRED ✗'} (${pwCookies.length} cookies)`, valid ? 'info' : 'warn');
+        return { ok: true, count: pwCookies.length, appliedTo: 'running-session', valid };
+      } catch (e) {
+        this.log(`addCookies on running session failed: ${e.message}`, 'warn');
+      }
+    }
+
+    // 2) Warna temp persistent context kholo taaki cookies profile/ mein save ho jayein
+    try {
+      const isLinux = process.platform === 'linux';
+      const tmp = await chromium.launchPersistentContext(this.userDataDir, {
+        headless: true,
+        viewport: { width: 1280, height: 800 },
+        args: isLinux
+          ? ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu']
+          : ['--start-maximized'],
+      });
+      try {
+        await tmp.addCookies(pwCookies);
+        const page = tmp.pages()[0] || (await tmp.newPage());
+        await page.goto('https://colab.research.google.com/', { waitUntil: 'domcontentloaded', timeout: 30000 })
+          .catch(() => {});
+        await page.waitForTimeout(3000);
+        const url = page.url();
+        const valid = !url.includes('accounts.google.com');
+        this.log(`Cookies import ${valid ? 'VALID ✓' : 'EXPIRED ✗'} (${pwCookies.length} cookies)`, valid ? 'info' : 'warn');
+        return { ok: true, count: pwCookies.length, appliedTo: 'profile', valid };
+      } finally {
+        await tmp.close().catch(() => {});
+      }
+    } catch (e) {
+      this.log(`Cookie import error: ${e.message}`, 'error');
+      return { ok: false, error: e.message };
     }
   }
 

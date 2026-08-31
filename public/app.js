@@ -479,6 +479,61 @@
     }
   });
 
+  // ── Google Session Cookies Import ──
+  $('#cookieImportBtn').addEventListener('click', () => {
+    $('#cookieImportResult').style.display = 'none';
+    $('#cookieImportModal').style.display = 'flex';
+  });
+
+  $('#closeCookieImportBtn').addEventListener('click', () => {
+    $('#cookieImportModal').style.display = 'none';
+  });
+  $('#cancelCookieImportBtn').addEventListener('click', () => {
+    $('#cookieImportModal').style.display = 'none';
+  });
+
+  $('#confirmCookieImportBtn').addEventListener('click', async () => {
+    const raw = $('#cookieJsonTextarea').value.trim();
+    if (!raw) {
+      showToast('Please paste cookie JSON', true);
+      return;
+    }
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (_) {
+      showToast('❌ Invalid JSON syntax', true);
+      return;
+    }
+    const resultBox = $('#cookieImportResult');
+    const btn = $('#confirmCookieImportBtn');
+    btn.disabled = true;
+    btn.textContent = '⏳ Importing cookies...';
+    try {
+      const res = await api('/api/cookies/import', 'POST', parsed);
+      if (res.ok) {
+        const validTxt = res.valid
+          ? '✅ Valid Google session — worker ab login nahi maangega'
+          : '⚠️ Cookies seem expired — Chrome se fresh export karo';
+        resultBox.textContent = `Imported ${res.count} cookies → ${validTxt}`;
+        resultBox.className = 'alert-box ' + (res.valid ? 'success' : 'warning');
+        resultBox.style.display = 'block';
+        showToast(res.valid ? '✅ Cookies imported & valid!' : '⚠️ Cookies imported but expired', !res.valid);
+        $('#cookieJsonTextarea').value = '';
+      } else {
+        resultBox.textContent = '❌ ' + (res.error || 'Import failed');
+        resultBox.className = 'alert-box error';
+        resultBox.style.display = 'block';
+        showToast('❌ ' + (res.error || 'Import failed'), true);
+      }
+    } catch (e) {
+      showToast('❌ Import error: ' + e.message, true);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '✅ Import Cookies';
+    }
+  });
+
   // ── Save Configuration ──
   $('#configForm').addEventListener('submit', async (e) => {
     e.preventDefault();

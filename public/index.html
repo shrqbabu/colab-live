@@ -188,6 +188,9 @@
             <button class="btn btn-secondary btn-sm" id="importJsonModalBtn">
               📥 Import Chrome Profile JSON
             </button>
+            <button class="btn btn-secondary btn-sm" id="cookieImportBtn">
+              🍪 Google Session Cookies
+            </button>
           </div>
 
           <form id="configForm" class="settings-form">
@@ -283,6 +286,32 @@
         <div class="modal-footer">
           <button type="button" class="btn btn-secondary" id="cancelImportBtn">Cancel</button>
           <button type="button" class="btn btn-primary" id="confirmImportBtn">✅ Apply Profile Data</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== IMPORT GOOGLE SESSION COOKIES MODAL ==================== -->
+  <div id="cookieImportModal" class="modal-overlay" style="display: none;">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>🍪 Import Google Session Cookies</h3>
+        <button class="btn-close" id="closeCookieImportBtn">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="modal-desc">
+          Chrome ki <b>Cookie-Editor</b> extension se <b>Export → as JSON</b> karke copied content yahan paste karein
+          (colab.research.google.com pe logged-in hokar). Yeh Google session cookies profile mein save ho jayengi —
+          worker/keeper ko login nahi maangna padega.
+        </p>
+
+        <textarea id="cookieJsonTextarea" placeholder='Paste Cookie-Editor JSON here: [{ "domain": ".google.com", "name": "SID", "value": "...", ... }]' rows="10"></textarea>
+
+        <div id="cookieImportResult" class="alert-box info" style="display: none;"></div>
+
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" id="cancelCookieImportBtn">Cancel</button>
+          <button type="button" class="btn btn-primary" id="confirmCookieImportBtn">✅ Import Cookies</button>
         </div>
       </div>
     </div>

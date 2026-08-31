@@ -332,6 +332,18 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    // Import Google Session Cookies (Cookie-Editor JSON) -> profile/
+    if (pathname === '/api/cookies/import' && method === 'POST') {
+      try {
+        const payload = await parseJsonBody(req);
+        const result = await worker.importCookies(payload);
+        sendJson(res, result.ok ? 200 : 400, result);
+      } catch (e) {
+        sendError(res, 400, 'Invalid cookie JSON payload: ' + e.message);
+      }
+      return;
+    }
+
     // Change Password
     if (pathname === '/api/auth/update' && method === 'POST') {
       try {

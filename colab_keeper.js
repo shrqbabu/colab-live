@@ -49,6 +49,10 @@ function log(...a) {
 // Mac pe Meta+F9, Windows/Linux pe Ctrl+F9
 const runKey = process.platform === 'darwin' ? 'Meta+F9' : 'Control+F9';
 
+// Throttle: connect click aur dialog dismiss ko spam mat karo
+let lastConnectClickAt = 0;
+let lastDialogActionAt = 0;
+
 (async () => {
   log(`Launching Chromium (${HEADLESS ? 'HEADLESS' : 'headed'} mode)...`);
 
@@ -79,41 +83,116 @@ const runKey = process.platform === 'darwin' ? 'Meta+F9' : 'Control+F9';
 
   // ============ Helpers (Colab shadow DOM pierce karke) ============
 
-  // Colab ka connect button shadow DOM ke andar hai — JS se directly click
-  async function clickConnect() {
+  // Kya page Google login pe redirect ho gaya? (session expire)
+  async function isLoginRequired() {
     return page
       .evaluate(() => {
-        // Top toolbar connect button (session alive ho to)
-        const tb = document.querySelector('#top-toolbar > colab-connect-button');
-        if (tb && tb.shadowRoot) {
-          const b = tb.shadowRoot.querySelector('connect');
-          if (b) { b.click(); return 'connect'; }
+        const url = window.location.href || '';
+        return (
+          url.includes('accounts.google.com') ||
+          url.includes('/signin') ||
+          url.includes('ServiceLogin')
+        );
+      })
+      .catch(() => false);
+  }
+
+  // Drive autorize / modal dialogs ko dismiss karo (Run All block na karein)
+  async function dismissDialogs() {
+    const now = Date.now();
+    if (now - lastDialogActionAt < 6000) return null; // throttle: 6s
+    lastDialogActionAt = now;
+
+    const action = await page
+      .evaluate(() => {
+        const clickLabel = (root, labels) => {
+          const els = root.querySelectorAll('button, mwc-button, paper-button, [role="button"], jupyter-button');
+          for (const el of els) {
+            const t = (el.textContent || '').trim().toLowerCase();
+            if (t && labels.some((l) => t.includes(l))) { el.click(); return true; }
+          }
+          return false;
+        };
+        const containers = document.querySelectorAll(
+          'dialog, colab-dialog, mwc-dialog, .goog-modal-dialog, [role="dialog"]'
+        );
+        // Pehle Drive autorize karo (data Drive mein hi hai — zaroori)
+        for (const c of containers) {
+          if (clickLabel(c, ['connect to google drive', 'allow', 'authorize'])) return 'drive-connect';
         }
-        // Reconnect button (session band hone par)
-        const rc = document.querySelector('colab-reconnect-button');
-        if (rc && rc.shadowRoot) {
-          const b = rc.shadowRoot.querySelector('connect');
-          if (b) { b.click(); return 'reconnect'; }
+        for (const c of containers) {
+          if (clickLabel(c, ['no thanks', 'cancel', 'dismiss', 'close', 'skip'])) return 'dialog-dismiss';
+        }
+        for (const c of containers) {
+          if (c.open && c.parentElement) {
+            const back = c.parentElement.querySelector('.modal-backdrop, .backdrop, modal-backdrop');
+            if (back) { back.click(); return 'backdrop-dismiss'; }
+          }
+        }
+        return null;
+      })
+      .catch(() => null);
+
+    if (action) {
+      log(`Dialogue action: ${action}`);
+      await page.waitForTimeout(1200);
+    }
+    return action;
+  }
+
+  // Colab ka connect button (shadow DOM ke andar mwc-button) — robust click
+  async function clickConnect() {
+    const now = Date.now();
+    if (now - lastConnectClickAt < 8000) return null; // throttle: 8s
+    lastConnectClickAt = now;
+
+    // 1) Playwright locator — open shadow roots pierce karta hai
+    try {
+      const host = page.locator('#top-toolbar colab-connect-button, colab-connect-button').first();
+      if (await host.count()) {
+        const inner = host.locator('mwc-button, button').filter({ hasText: /connect|reconnect/i }).first();
+        if (await inner.count()) {
+          await inner.click({ timeout: 4000 });
+          return 'connect-inner';
+        }
+        await host.click({ timeout: 4000 });
+        return 'connect-host';
+      }
+    } catch (_) {}
+
+    // 2) JS fallback through shadow DOM
+    return page
+      .evaluate(() => {
+        const hosts = document.querySelectorAll(
+          '#top-toolbar colab-connect-button, colab-connect-button, colab-reconnect-button'
+        );
+        for (const host of hosts) {
+          const root = host.shadowRoot || host;
+          const btns = root.querySelectorAll('mwc-button, button, [role="button"], connect');
+          for (const b of btns) {
+            if (/connect|reconnect/i.test(b.textContent || '')) { b.click(); return 'connect-js'; }
+          }
         }
         return null;
       })
       .catch(() => null);
   }
 
-  // Runtime connected hai ya nahi
+  // Runtime connected hai ya nahi (modern Colab: RAM/Disk text = connected)
   async function isConnected() {
     return page
       .evaluate(() => {
         // Disconnect hone par Colab ye element dikhata hai -> connected nahi
         if (document.querySelector('colab-reconnect-button')) return false;
-        const tb = document.querySelector('#top-toolbar > colab-connect-button');
+        const tb = document.querySelector('#top-toolbar colab-connect-button, colab-connect-button');
         if (!tb) return false;
         // Connected state signals (Colab ka internal state)
-        if (tb.hasAttribute('connected') || tb.classList.contains('connected')) return true;
-        if (tb.getAttribute('connected') === 'true') return true;
-        // Fallback: shadow root ka text
+        if (tb.hasAttribute('connected') || tb.getAttribute('connected') === 'true' || tb.classList.contains('connected')) return true;
+        // Shadow root ka text: RAM/Disk ya connected/check dikhe to connected
         const txt = ((tb.shadowRoot && tb.shadowRoot.textContent) || '').toLowerCase();
-        return txt.includes('connected') || txt.includes('check');
+        if (txt.includes('ram') || txt.includes('disk')) return true;
+        if (txt.includes('connected') || txt.includes('check')) return true;
+        return false;
       })
       .catch(() => false);
   }
@@ -132,7 +211,9 @@ const runKey = process.platform === 'darwin' ? 'Meta+F9' : 'Control+F9';
     }
   }
 
-  // ============ Main loop ============
+  // ============ Initial: Drive auth dialog clear karo, phir cells wait ============
+  await page.waitForTimeout(4000);
+  await dismissDialogs();
   await waitForCells();
 
   let wasDisconnected = false;
@@ -141,7 +222,17 @@ const runKey = process.platform === 'darwin' ? 'Meta+F9' : 'Control+F9';
   log('Monitoring start... (keep-alive ON, disconnect watch ON)');
 
   while (true) {
-    // 1) Keep-alive: har loop me connect click (idle timeout rokta hai)
+    // 0) Login expire check — accounts.google.com pe redirect nahi hona chahiye
+    if (await isLoginRequired()) {
+      log('🔑 Google login required — manual re-login zaroori hai. 30s baad retry...');
+      await page.waitForTimeout(30000);
+      continue;
+    }
+
+    // 1) Har loop me chatne wale dialogs (Drive autorize) dismiss karo
+    await dismissDialogs();
+
+    // 2) Keep-alive: har loop me connect click (idle timeout rokta hai)
     await clickConnect();
 
     const connected = await isConnected();
