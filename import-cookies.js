@@ -72,13 +72,44 @@ function mapSameSite(v) {
 
   // Headed launch (better for cookie persistence) — but headless OK too
   const isLinux = process.platform === 'linux';
-  const context = await chromium.launchPersistentContext(PROFILE_DIR, {
+  function detectExecutablePath() {
+    const envPaths = [
+      process.env.PLAYWRIGHT_EXECUTABLE_PATH,
+      process.env.CHROMIUM_PATH,
+      process.env.PUPPETEER_EXECUTABLE_PATH,
+      process.env.CHROME_PATH,
+    ];
+    for (const ep of envPaths) {
+      if (ep && fs.existsSync(ep)) return ep;
+    }
+    if (isLinux || process.platform === 'darwin') {
+      const binaries = ['chromium', 'chromium-browser', 'google-chrome-stable', 'google-chrome', 'chrome'];
+      try {
+        const { execSync } = require('child_process');
+        for (const b of binaries) {
+          try {
+            const found = execSync(`command -v ${b} || which ${b}`, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim().split('\n')[0].trim();
+            if (found && fs.existsSync(found)) return found;
+          } catch (_) {}
+        }
+      } catch (_) {}
+    }
+    return undefined;
+  }
+
+  const execPath = detectExecutablePath();
+  if (execPath) console.log(`Using Chromium: ${execPath}`);
+
+  const launchOpts = {
     headless: true,
     viewport: { width: 1280, height: 800 },
     args: isLinux
       ? ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu']
       : ['--start-maximized'],
-  });
+  };
+  if (execPath) launchOpts.executablePath = execPath;
+
+  const context = await chromium.launchPersistentContext(PROFILE_DIR, launchOpts);
 
   let ok = false;
   try {

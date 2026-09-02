@@ -67,11 +67,15 @@ function parseJsonBody(req) {
   });
 }
 
-function sendJson(res, statusCode, data) {
+function sendJson(res, statusCode, data, extraHeaders = {}) {
   res.writeHead(statusCode, {
     'Content-Type': 'application/json; charset=utf-8',
     'Cache-Control': 'no-cache, no-store',
     'X-Content-Type-Options': 'nosniff',
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-API-Secret, X-VPS-Key, X-Requested-With',
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS, PUT, DELETE',
+    ...extraHeaders,
   });
   res.end(JSON.stringify(data));
 }
@@ -81,8 +85,19 @@ function sendError(res, statusCode, message) {
 }
 
 function checkAuth(req) {
+  const conf = worker.loadConfig();
+  const apiSecret = process.env.API_SECRET || process.env.VPS_API_SECRET || conf.apiSecret;
+
   const authHeader = req.headers['authorization'] || '';
   const token = authHeader.replace(/^Bearer\s+/i, '').trim();
+  const secretHeader = req.headers['x-api-secret'] || req.headers['x-vps-key'] || '';
+
+  // If API_SECRET is configured and matches, grant access
+  if (apiSecret && (secretHeader === apiSecret || token === apiSecret)) {
+    return true;
+  }
+
+  // Check active web sessions
   if (token && activeSessions.has(token)) return true;
 
   const cookies = req.headers['cookie'] || '';
@@ -110,15 +125,33 @@ const server = http.createServer(async (req, res) => {
   const pathname = parsedUrl.pathname;
   const method = req.method.toUpperCase();
 
-  // Handle CORS Preflight — only for same-origin dev use
+  // Global CORS headers on all responses
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-API-Secret, X-VPS-Key, X-Requested-With');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PUT, DELETE');
+
+  // Handle CORS Preflight
   if (method === 'OPTIONS') {
     res.writeHead(204, {
-      'Access-Control-Allow-Origin': req.headers['origin'] || '',
-      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-API-Secret, X-VPS-Key, X-Requested-With',
+      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS, PUT, DELETE',
       'Access-Control-Max-Age': '86400',
     });
     res.end();
+    return;
+  }
+
+  // ── Health Check (Public, for Vercel proxy & monitoring) ──
+  if (pathname === '/api/health' && method === 'GET') {
+    sendJson(res, 200, {
+      ok: true,
+      service: 'colab-vps-engine',
+      isRunning: worker.isRunning,
+      isConnected: worker.isConnected,
+      uptimeSec: Math.floor(process.uptime()),
+      timestamp: Date.now()
+    });
     return;
   }
 

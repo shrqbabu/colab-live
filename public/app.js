@@ -9,9 +9,12 @@
   const $$ = (s) => document.querySelectorAll(s);
 
   let authToken = localStorage.getItem('colab_auth_token') || null;
+  let customVpsUrl = localStorage.getItem('colab_vps_url') || '';
+  let customVpsSecret = localStorage.getItem('colab_vps_secret') || '';
   let autoScrollLogs = true;
   let sseSource = null;
   let currentStatus = null;
+  let vpsHealthInterval = null;
 
   // ── Toast Notifications ──
   function showToast(msg, isError = false) {
@@ -50,11 +53,17 @@
     return (b / 1073741824).toFixed(1) + ' GB';
   }
 
-  // ── API Fetch Wrapper ──
+  // ── API Fetch Wrapper with Oracle VPS Gateway Bridge ──
   async function api(path, method = 'GET', body = null) {
     const headers = { 'Content-Type': 'application/json' };
     if (authToken) {
       headers['Authorization'] = `Bearer ${authToken}`;
+    }
+    if (customVpsUrl) {
+      headers['X-VPS-URL'] = customVpsUrl;
+    }
+    if (customVpsSecret) {
+      headers['X-API-Secret'] = customVpsSecret;
     }
 
     const opts = { method, headers };
@@ -107,6 +116,36 @@
     loadStatus();
     loadLogs();
     connectSSE();
+    checkVpsHealth();
+    if (!vpsHealthInterval) {
+      vpsHealthInterval = setInterval(checkVpsHealth, 10000);
+    }
+  }
+
+  // ── Oracle VPS Health Monitor ──
+  async function checkVpsHealth() {
+    const pill = $('#vpsNodePill');
+    const dot = $('#vpsNodeDot');
+    const text = $('#vpsNodeText');
+    if (!pill || !text) return;
+
+    const startTime = Date.now();
+    try {
+      const res = await api('/api/health');
+      const latency = Date.now() - startTime;
+      if (res && res.ok) {
+        pill.className = 'vps-node-pill online';
+        text.textContent = `Oracle VPS: Online (${latency}ms)`;
+        pill.title = `Connected to Oracle VPS Automation Node. Latency: ${latency}ms, Worker running: ${res.isRunning ? 'YES' : 'NO'}`;
+      } else {
+        pill.className = 'vps-node-pill warning';
+        text.textContent = 'Oracle VPS: Degraded';
+      }
+    } catch (e) {
+      pill.className = 'vps-node-pill offline';
+      text.textContent = 'Oracle VPS: Disconnected';
+      pill.title = 'Cannot connect to Oracle VPS Backend. Click to configure VPS URL or check security list.';
+    }
   }
 
   $('#loginForm').addEventListener('submit', async (e) => {
@@ -418,9 +457,12 @@
     img.style.display = 'none';
 
     try {
-      const res = await fetch('/api/screenshot', {
-        headers: authToken ? { 'Authorization': `Bearer ${authToken}` } : {}
-      });
+      const headers = {};
+      if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+      if (customVpsUrl) headers['X-VPS-URL'] = customVpsUrl;
+      if (customVpsSecret) headers['X-API-Secret'] = customVpsSecret;
+
+      const res = await fetch('/api/screenshot', { headers });
       if (res.ok) {
         const blob = await res.blob();
         const url = URL.createObjectURL(blob);
@@ -443,6 +485,81 @@
   $('#refreshScreenshotBtn').addEventListener('click', fetchScreenshot);
   $('#closeScreenshotModalBtn').addEventListener('click', () => {
     $('#screenshotModal').style.display = 'none';
+  });
+
+  // ── Oracle VPS Backend Settings Modal ──
+  function openVpsModal() {
+    $('#vpsUrlInput').value = customVpsUrl || '';
+    $('#vpsSecretInput').value = customVpsSecret || '';
+    $('#vpsTestResult').style.display = 'none';
+    $('#vpsSettingsModal').style.display = 'flex';
+  }
+
+  $('#openVpsSettingsBtn').addEventListener('click', openVpsModal);
+  $('#vpsNodePill').addEventListener('click', openVpsModal);
+
+  $('#closeVpsSettingsBtn').addEventListener('click', () => {
+    $('#vpsSettingsModal').style.display = 'none';
+  });
+
+  $('#testVpsBtn').addEventListener('click', async () => {
+    const testUrl = $('#vpsUrlInput').value.trim();
+    const testSecret = $('#vpsSecretInput').value.trim();
+    const resultBox = $('#vpsTestResult');
+    const testBtn = $('#testVpsBtn');
+
+    testBtn.disabled = true;
+    testBtn.textContent = '⏳ Testing...';
+    resultBox.style.display = 'block';
+    resultBox.className = 'alert-box info';
+    resultBox.textContent = 'Connecting to Oracle VPS node...';
+
+    const testHeaders = { 'Content-Type': 'application/json' };
+    if (testUrl) testHeaders['X-VPS-URL'] = testUrl;
+    if (testSecret) testHeaders['X-API-Secret'] = testSecret;
+
+    try {
+      const res = await fetch('/api/health', { headers: testHeaders });
+      const data = await res.json();
+      if (res.ok && data.ok) {
+        resultBox.className = 'alert-box success';
+        resultBox.textContent = `✅ Successfully connected to Oracle VPS! (Uptime: ${fmtHumanDuration(data.uptimeSec)}, Worker running: ${data.isRunning ? 'YES' : 'NO'})`;
+        showToast('✅ VPS Node Connection Successful!');
+      } else {
+        resultBox.className = 'alert-box error';
+        resultBox.textContent = '❌ Failed: ' + (data.error || 'Unknown error response');
+      }
+    } catch (err) {
+      resultBox.className = 'alert-box error';
+      resultBox.textContent = '❌ Connection Error: ' + err.message;
+    } finally {
+      testBtn.disabled = false;
+      testBtn.textContent = '⚡ Test Connection';
+    }
+  });
+
+  $('#vpsSettingsForm').addEventListener('submit', (e) => {
+    e.preventDefault();
+    customVpsUrl = $('#vpsUrlInput').value.trim();
+    customVpsSecret = $('#vpsSecretInput').value.trim();
+
+    if (customVpsUrl) {
+      localStorage.setItem('colab_vps_url', customVpsUrl);
+    } else {
+      localStorage.removeItem('colab_vps_url');
+    }
+
+    if (customVpsSecret) {
+      localStorage.setItem('colab_vps_secret', customVpsSecret);
+    } else {
+      localStorage.removeItem('colab_vps_secret');
+    }
+
+    $('#vpsSettingsModal').style.display = 'none';
+    showToast('💾 VPS settings saved & applied!');
+    checkVpsHealth();
+    loadStatus();
+    loadLogs();
   });
 
   // ── Import JSON Modal ──

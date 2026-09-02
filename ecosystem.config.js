@@ -1,4 +1,4 @@
-// PM2 Config — VPS pe 24/7 Web Dashboard aur Playwright Worker chalane ke liye
+// PM2 Config — Oracle VPS pe 24/7 Automation & Playwright Engine chalane ke liye
 // Use: pm2 start ecosystem.config.js
 
 module.exports = {
@@ -10,7 +10,7 @@ module.exports = {
       autorestart: true,
       restart_delay: 5000,
       max_restarts: 50,
-      max_memory_restart: '800M',
+      max_memory_restart: '1200M',
       kill_timeout: 10000,
       out_file: './pm2_out.log',
       error_file: './pm2_err.log',
@@ -20,6 +20,9 @@ module.exports = {
         NODE_ENV: 'production',
         PORT: 3000,
         HEADLESS: 'true',
+        // Optional: API_SECRET: 'your_super_secret_key_12345',
+        // Optional: ADMIN_EMAIL: 'admin@colab.pro',
+        // Optional: ADMIN_PASSWORD: 'password123',
       },
     },
   ],

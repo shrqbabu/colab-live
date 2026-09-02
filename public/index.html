@@ -61,6 +61,15 @@
       </div>
 
       <div class="nav-right">
+        <div class="vps-node-pill" id="vpsNodePill" title="Oracle VPS Connection Status — Click to configure">
+          <span class="vps-node-dot" id="vpsNodeDot"></span>
+          <span id="vpsNodeText">Oracle VPS: Connecting</span>
+        </div>
+
+        <button class="btn btn-secondary btn-sm" id="openVpsSettingsBtn" title="Configure Oracle VPS Backend">
+          🌐 VPS Node
+        </button>
+
         <div class="status-badge" id="masterStatusBadge">
           <span class="status-dot"></span>
           <span class="status-label" id="masterStatusText">CONNECTING</span>
@@ -313,6 +322,44 @@
           <button type="button" class="btn btn-secondary" id="cancelCookieImportBtn">Cancel</button>
           <button type="button" class="btn btn-primary" id="confirmCookieImportBtn">✅ Import Cookies</button>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== ORACLE VPS SETTINGS MODAL ==================== -->
+  <div id="vpsSettingsModal" class="modal-overlay" style="display: none;">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>🌐 Oracle VPS Automation Backend Node</h3>
+        <button class="btn-close" id="closeVpsSettingsBtn">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="modal-desc">
+          Yeh UI & API Vercel pe host ho sakti hai jabki Playwright logic Oracle VPS pe chalega.
+          Apna Oracle VPS Public IP / Domain aur API Secret yahan configure karein:
+        </p>
+
+        <form id="vpsSettingsForm" class="settings-form">
+          <div class="input-group">
+            <label for="vpsUrlInput">Oracle VPS Backend URL</label>
+            <input type="url" id="vpsUrlInput" placeholder="http://123.45.67.89:3000 or https://vps.yourdomain.com" />
+            <small style="color:var(--text-muted); font-size: 0.8rem; margin-top: 4px; display: block;">
+              (Leave empty to use Vercel <code>VPS_URL</code> Environment Variable)
+            </small>
+          </div>
+
+          <div class="input-group">
+            <label for="vpsSecretInput">VPS API Secret (Optional)</label>
+            <input type="password" id="vpsSecretInput" placeholder="Enter API_SECRET if set on VPS" />
+          </div>
+
+          <div id="vpsTestResult" class="alert-box info" style="display: none;"></div>
+
+          <div class="modal-footer" style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px;">
+            <button type="button" class="btn btn-secondary" id="testVpsBtn">⚡ Test Connection</button>
+            <button type="submit" class="btn btn-primary" id="saveVpsSettingsBtn">💾 Save & Apply</button>
+          </div>
+        </form>
       </div>
     </div>
   </div>

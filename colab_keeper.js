@@ -62,22 +62,64 @@ let lastDialogActionAt = 0;
     ? ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu']
     : ['--start-maximized'];
 
-  // Full Chromium use karo (headless-shell nahi) — chrome-headless-shell alag
-  // download hoti hai jo Replit build mein missing ho jaati hai. Full chromium
-  // headless mode bhi chala sakta hai, isliye stable hai.
-  let execPath = process.env.PLAYWRIGHT_EXECUTABLE_PATH;
-  if (!execPath) {
+  function detectExecutablePath() {
+    const envPaths = [
+      process.env.PLAYWRIGHT_EXECUTABLE_PATH,
+      process.env.CHROMIUM_PATH,
+      process.env.PUPPETEER_EXECUTABLE_PATH,
+      process.env.CHROME_PATH,
+    ];
+    for (const ep of envPaths) {
+      if (ep && fs.existsSync(ep)) return ep;
+    }
+
+    if (process.platform === 'linux' || process.platform === 'darwin') {
+      const binaries = ['chromium', 'chromium-browser', 'google-chrome-stable', 'google-chrome', 'chrome'];
+      try {
+        const { execSync } = require('child_process');
+        for (const b of binaries) {
+          try {
+            const found = execSync(`command -v ${b} || which ${b}`, {
+              encoding: 'utf8',
+              stdio: ['ignore', 'pipe', 'ignore'],
+            }).trim().split('\n')[0].trim();
+            if (found && fs.existsSync(found)) return found;
+          } catch (_) {}
+        }
+      } catch (_) {}
+
+      const pathDirs = (process.env.PATH || '').split(path.delimiter);
+      for (const dir of pathDirs) {
+        for (const b of binaries) {
+          const full = path.join(dir, b);
+          if (fs.existsSync(full)) return full;
+        }
+      }
+    }
+
     const candidates = isLinux
-      ? ['/usr/bin/chromium', '/usr/bin/google-chrome', '/nix/var/nix/profiles/default/bin/chromium']
+      ? [
+          '/usr/bin/chromium',
+          '/usr/bin/chromium-browser',
+          '/usr/bin/google-chrome',
+          '/usr/bin/google-chrome-stable',
+          '/run/current-system/sw/bin/chromium',
+          '/nix/var/nix/profiles/default/bin/chromium',
+          '/home/runner/.nix-profile/bin/chromium',
+        ]
       : [];
     for (const p of candidates) {
-      if (fs.existsSync(p)) { execPath = p; break; }
+      if (fs.existsSync(p)) return p;
     }
+
+    try {
+      const bundled = chromium.executablePath();
+      if (bundled && fs.existsSync(bundled)) return bundled;
+    } catch (_) {}
+    return undefined;
   }
-  if (!execPath) {
-    const bundled = chromium.executablePath();
-    if (bundled && fs.existsSync(bundled)) execPath = bundled;
-  }
+
+  const execPath = detectExecutablePath();
   if (execPath) log(`Using Chromium: ${execPath}`);
 
   const launchOpts = {

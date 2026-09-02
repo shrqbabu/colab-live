@@ -94,20 +94,59 @@ class ColabWorker extends EventEmitter {
     }
   }
 
-  // Detect system Chromium for VPS/desktop environments
+  // Detect system Chromium for VPS/desktop/Nix/Replit environments
   _detectExecutablePath() {
-    if (process.env.PLAYWRIGHT_EXECUTABLE_PATH) {
-      return process.env.PLAYWRIGHT_EXECUTABLE_PATH;
+    const envPaths = [
+      process.env.PLAYWRIGHT_EXECUTABLE_PATH,
+      process.env.CHROMIUM_PATH,
+      process.env.PUPPETEER_EXECUTABLE_PATH,
+      process.env.CHROME_PATH,
+      this.config ? this.config.executablePath : null,
+    ];
+    for (const ep of envPaths) {
+      if (ep && fs.existsSync(ep)) {
+        this.log(`Found Chromium via environment config: ${ep}`, 'info');
+        return ep;
+      }
     }
-    if (this.config.executablePath) {
-      return this.config.executablePath;
+
+    if (process.platform === 'linux' || process.platform === 'darwin') {
+      const binaries = ['chromium', 'chromium-browser', 'google-chrome-stable', 'google-chrome', 'chrome'];
+      try {
+        const { execSync } = require('child_process');
+        for (const b of binaries) {
+          try {
+            const found = execSync(`command -v ${b} || which ${b}`, {
+              encoding: 'utf8',
+              stdio: ['ignore', 'pipe', 'ignore'],
+            }).trim().split('\n')[0].trim();
+            if (found && fs.existsSync(found)) {
+              this.log(`Found system Chromium via PATH (${b}): ${found}`, 'info');
+              return found;
+            }
+          } catch (_) {}
+        }
+      } catch (_) {}
+
+      // Search in PATH directories manually
+      const pathDirs = (process.env.PATH || '').split(path.delimiter);
+      for (const dir of pathDirs) {
+        for (const b of binaries) {
+          const full = path.join(dir, b);
+          if (fs.existsSync(full)) {
+            this.log(`Found Chromium in PATH directory: ${full}`, 'info');
+            return full;
+          }
+        }
+      }
     }
+
     const candidates = process.platform === 'win32'
       ? [
           'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
           'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
           process.env.LOCALAPPDATA
-            ? process.env.LOCALAPPDATA + '\\Google\\Chrome\\Application\\chrome.exe'
+            ? path.join(process.env.LOCALAPPDATA, 'Google', 'Chrome', 'Application', 'chrome.exe')
             : '',
           'C:\\Program Files\\Chromium\\Application\\chrome.exe',
         ]
@@ -116,8 +155,11 @@ class ColabWorker extends EventEmitter {
           '/usr/bin/chromium-browser',
           '/usr/bin/google-chrome',
           '/usr/bin/google-chrome-stable',
+          '/run/current-system/sw/bin/chromium',
           '/nix/var/nix/profiles/default/bin/chromium',
+          '/home/runner/.nix-profile/bin/chromium',
         ];
+
     for (const p of candidates) {
       if (p && fs.existsSync(p)) {
         this.log(`Found system Chromium at: ${p}`, 'info');
@@ -125,20 +167,7 @@ class ColabWorker extends EventEmitter {
       }
     }
 
-    if (process.platform === 'linux') {
-      try {
-        const { execSync } = require('child_process');
-        const found = execSync('which chromium || which chromium-browser || which google-chrome || which google-chrome-stable', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
-        if (found && fs.existsSync(found)) {
-          this.log(`Found system Chromium via PATH at: ${found}`, 'info');
-          return found;
-        }
-      } catch (_) {}
-    }
-
-    // Fall back to Playwright's bundled FULL Chromium (not headless-shell —
-    // yeh full chromium hai jo headless mode bhi chala sakta hai, aur
-    // chrome-headless-shell ki alag download ki zaroorat khatam karta hai)
+    // Fall back to Playwright's bundled Chromium
     try {
       const bundled = chromium.executablePath();
       if (bundled && fs.existsSync(bundled)) {
