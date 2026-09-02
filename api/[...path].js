@@ -7,18 +7,106 @@ const http = require('http');
 const https = require('https');
 const { URL } = require('url');
 
+// Headers that must never be proxied (RFC 2616 / RFC 7230)
+const HOP_BY_HOP_HEADERS = new Set([
+  'connection',
+  'keep-alive',
+  'proxy-authenticate',
+  'proxy-authorization',
+  'te',
+  'trailer',
+  'transfer-encoding',
+  'upgrade',
+  'host',
+  'x-vps-url',
+]);
+
+function sendResponse(res, statusCode, body, headers = {}) {
+  if (res.headersSent) return;
+  for (const [k, v] of Object.entries(headers)) {
+    try {
+      res.setHeader(k, v);
+    } catch (_) {}
+  }
+  if (typeof res.status === 'function') {
+    res.status(statusCode);
+  } else {
+    res.statusCode = statusCode;
+  }
+  if (typeof body === 'object' && !Buffer.isBuffer(body)) {
+    try {
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    } catch (_) {}
+    res.end(JSON.stringify(body));
+  } else {
+    res.end(body);
+  }
+}
+
+async function getRequestBody(req) {
+  if (req.body !== undefined && req.body !== null) {
+    if (typeof req.body === 'object' && !Buffer.isBuffer(req.body)) {
+      return Buffer.from(JSON.stringify(req.body));
+    } else if (typeof req.body === 'string') {
+      return Buffer.from(req.body);
+    } else if (Buffer.isBuffer(req.body)) {
+      return req.body;
+    }
+  }
+
+  // If stream is already completed, closed or unreadable, return empty buffer immediately
+  if (req.readableEnded || req.complete || req.readable === false) {
+    return Buffer.alloc(0);
+  }
+
+  // If streaming body, read with strict timeout to prevent infinite function hangs
+  return new Promise((resolve) => {
+    const chunks = [];
+    let finished = false;
+
+    const timer = setTimeout(() => {
+      if (!finished) {
+        finished = true;
+        resolve(Buffer.concat(chunks));
+      }
+    }, 1500);
+
+    req.on('data', (chunk) => chunks.push(chunk));
+    req.on('end', () => {
+      if (!finished) {
+        finished = true;
+        clearTimeout(timer);
+        resolve(Buffer.concat(chunks));
+      }
+    });
+    req.on('error', () => {
+      if (!finished) {
+        finished = true;
+        clearTimeout(timer);
+        resolve(Buffer.alloc(0));
+      }
+    });
+  });
+}
+
 module.exports = async function handler(req, res) {
   // Enable CORS
-  res.setHeader('Access-Control-Allow-Credentials', 'true');
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
-  res.setHeader(
-    'Access-Control-Allow-Headers',
-    'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version, Authorization, X-VPS-URL, X-API-Secret, X-VPS-Key'
-  );
+  try {
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
+    res.setHeader(
+      'Access-Control-Allow-Headers',
+      'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version, Authorization, X-VPS-URL, X-API-Secret, X-VPS-Key'
+    );
+  } catch (_) {}
 
   if (req.method === 'OPTIONS') {
-    return res.status(200).end();
+    if (typeof res.status === 'function') {
+      return res.status(200).end();
+    }
+    res.statusCode = 200;
+    return res.end();
   }
 
   // 1. Determine Oracle VPS URL
@@ -46,6 +134,11 @@ module.exports = async function handler(req, res) {
     if (!parsedPath.startsWith('/')) parsedPath = '/' + parsedPath;
   }
 
+  // Clean extra /api prefixes if present
+  if (parsedPath.startsWith('/api/')) {
+    parsedPath = parsedPath.replace(/^\/api/, '');
+  }
+
   // Preserve query string (excluding Vercel's internal path parameter)
   let queryString = '';
   if (req.query) {
@@ -65,7 +158,7 @@ module.exports = async function handler(req, res) {
 
   // Gateway Info Route
   if (parsedPath === '/vps-gateway-status' || parsedPath === '/gateway-info') {
-    return res.status(200).json({
+    return sendResponse(res, 200, {
       ok: true,
       service: 'vercel-worker-api-gateway',
       vpsConfigured: Boolean(vpsUrl),
@@ -76,7 +169,7 @@ module.exports = async function handler(req, res) {
   }
 
   if (!vpsUrl) {
-    return res.status(503).json({
+    return sendResponse(res, 503, {
       ok: false,
       error: 'Oracle VPS URL not configured. Set VPS_URL environment variable in Vercel or configure it in the Dashboard UI settings.',
       code: 'VPS_URL_MISSING',
@@ -93,41 +186,31 @@ module.exports = async function handler(req, res) {
     const client = isHttps ? https : http;
 
     // 4. Prepare Headers to forward
-    const forwardHeaders = { ...req.headers };
-    delete forwardHeaders.host;
-    delete forwardHeaders['x-vps-url']; // Do not leak custom header downstream
-    
+    const forwardHeaders = {};
+    for (const [key, val] of Object.entries(req.headers || {})) {
+      const lower = key.toLowerCase();
+      if (!HOP_BY_HOP_HEADERS.has(lower)) {
+        forwardHeaders[lower] = val;
+      }
+    }
+
     // Attach secret if provided via env
     const apiSecret = process.env.VPS_API_SECRET || process.env.API_SECRET || req.headers['x-api-secret'] || req.headers['x-vps-key'];
     if (apiSecret) {
       forwardHeaders['x-api-secret'] = apiSecret;
     }
 
-    // Read request body safely (handles pre-parsed object, string, buffer or stream)
-    let bodyBuffer = null;
+    // Read request body safely without hanging
+    let bodyBuffer = Buffer.alloc(0);
     if (['POST', 'PUT', 'PATCH'].includes(req.method.toUpperCase())) {
-      if (req.body) {
-        if (typeof req.body === 'object' && !Buffer.isBuffer(req.body)) {
-          bodyBuffer = Buffer.from(JSON.stringify(req.body));
-        } else if (typeof req.body === 'string') {
-          bodyBuffer = Buffer.from(req.body);
-        } else if (Buffer.isBuffer(req.body)) {
-          bodyBuffer = req.body;
-        }
-      } else {
-        bodyBuffer = await new Promise((resolve) => {
-          const chunks = [];
-          req.on('data', (chunk) => chunks.push(chunk));
-          req.on('end', () => resolve(Buffer.concat(chunks)));
-          req.on('error', () => resolve(Buffer.alloc(0)));
-        });
-      }
-
-      if (bodyBuffer && bodyBuffer.length > 0) {
+      bodyBuffer = await getRequestBody(req);
+      if (bodyBuffer.length > 0) {
         forwardHeaders['content-length'] = bodyBuffer.length;
         if (!forwardHeaders['content-type']) {
           forwardHeaders['content-type'] = 'application/json';
         }
+      } else {
+        delete forwardHeaders['content-length'];
       }
     }
 
@@ -137,56 +220,81 @@ module.exports = async function handler(req, res) {
       port: targetParsed.port || (isHttps ? 443 : 80),
       path: targetParsed.pathname + targetParsed.search,
       headers: forwardHeaders,
-      timeout: 25000, // Vercel function safety timeout
+      timeout: 25000,
     };
 
     const proxyReq = client.request(options, (proxyRes) => {
       // Set response status
-      res.status(proxyRes.statusCode || 200);
+      if (typeof res.status === 'function') {
+        res.status(proxyRes.statusCode || 200);
+      } else {
+        res.statusCode = proxyRes.statusCode || 200;
+      }
 
-      // Copy response headers
+      // Copy response headers (excluding hop-by-hop & CORS headers)
       for (const [key, value] of Object.entries(proxyRes.headers)) {
-        // Keep CORS controlled by Vercel
-        if (!key.toLowerCase().startsWith('access-control-')) {
-          res.setHeader(key, value);
+        const lower = key.toLowerCase();
+        if (!HOP_BY_HOP_HEADERS.has(lower) && !lower.startsWith('access-control-')) {
+          try {
+            res.setHeader(key, value);
+          } catch (_) {}
         }
       }
 
       // Stream response chunks
       proxyRes.pipe(res);
+
+      proxyRes.on('error', (err) => {
+        console.error('Proxy response stream error:', err.message);
+        if (!res.headersSent) {
+          sendResponse(res, 502, { ok: false, error: 'Proxy stream error: ' + err.message });
+        } else {
+          try { res.end(); } catch (_) {}
+        }
+      });
+    });
+
+    req.on('close', () => {
+      if (!proxyReq.destroyed) {
+        proxyReq.destroy();
+      }
     });
 
     proxyReq.on('error', (err) => {
       console.error('Error forwarding request to Oracle VPS:', err.message);
       if (!res.headersSent) {
-        res.status(502).json({
+        sendResponse(res, 502, {
           ok: false,
           error: `Failed to reach Oracle VPS (${vpsUrl}): ${err.message}`,
           code: 'VPS_UNREACHABLE',
           hint: 'Ensure your Oracle Cloud VPS security list allows ingress on port 3000 and PM2 is running.'
         });
+      } else {
+        try { res.end(); } catch (_) {}
       }
     });
 
     proxyReq.on('timeout', () => {
       proxyReq.destroy();
       if (!res.headersSent) {
-        res.status(504).json({
+        sendResponse(res, 504, {
           ok: false,
           error: `Oracle VPS at ${vpsUrl} timed out after 25s`,
           code: 'VPS_TIMEOUT'
         });
+      } else {
+        try { res.end(); } catch (_) {}
       }
     });
 
-    if (bodyBuffer) {
+    if (bodyBuffer.length > 0) {
       proxyReq.write(bodyBuffer);
     }
     proxyReq.end();
 
   } catch (err) {
     console.error('Proxy setup error:', err);
-    return res.status(500).json({
+    return sendResponse(res, 500, {
       ok: false,
       error: 'Vercel API Gateway Error: ' + err.message
     });

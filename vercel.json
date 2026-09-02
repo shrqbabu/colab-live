@@ -3,12 +3,6 @@
   "name": "colab-pro-manager",
   "outputDirectory": "public",
   "cleanUrls": true,
-  "rewrites": [
-    {
-      "source": "/api/(.*)",
-      "destination": "/api/[...path]"
-    }
-  ],
   "headers": [
     {
       "source": "/api/(.*)",
