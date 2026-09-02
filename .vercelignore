@@ -1,4 +1,12 @@
-# Temporary runtime files
+# Backend VPS automation files (Exclusively run on Oracle Cloud VPS via PM2)
+server.js
+worker.js
+colab_keeper.js
+colab-login.js
+import-cookies.js
+deploy-vps.sh
+ecosystem.config.js
+config.json
 profile/
 *.log
 .git/

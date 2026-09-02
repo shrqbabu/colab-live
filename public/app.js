@@ -5,12 +5,37 @@
 (function () {
   "use strict";
 
+  // Prevent evaluation crash if executed in Node.js / Serverless environment
+  if (typeof window === "undefined" || typeof document === "undefined") {
+    return;
+  }
+
   const $ = (s) => document.querySelector(s);
   const $$ = (s) => document.querySelectorAll(s);
 
-  let authToken = localStorage.getItem('colab_auth_token') || null;
-  let customVpsUrl = localStorage.getItem('colab_vps_url') || '';
-  let customVpsSecret = localStorage.getItem('colab_vps_secret') || '';
+  const getStorage = (key) => {
+    try {
+      return typeof localStorage !== "undefined" ? localStorage.getItem(key) : null;
+    } catch (_) {
+      return null;
+    }
+  };
+
+  const setStorage = (key, val) => {
+    try {
+      if (typeof localStorage !== "undefined") localStorage.setItem(key, val);
+    } catch (_) {}
+  };
+
+  const removeStorage = (key) => {
+    try {
+      if (typeof localStorage !== "undefined") localStorage.removeItem(key);
+    } catch (_) {}
+  };
+
+  let authToken = getStorage('colab_auth_token') || null;
+  let customVpsUrl = getStorage('colab_vps_url') || '';
+  let customVpsSecret = getStorage('colab_vps_secret') || '';
   let autoScrollLogs = true;
   let sseSource = null;
   let currentStatus = null;
@@ -81,7 +106,7 @@
 
   function handleUnauthorized() {
     authToken = null;
-    localStorage.removeItem('colab_auth_token');
+    removeStorage('colab_auth_token');
     $('#dashboardView').style.display = 'none';
     $('#loginView').style.display = 'flex';
     if (sseSource) {
@@ -173,7 +198,7 @@
 
       if (data.ok && data.token) {
         authToken = data.token;
-        localStorage.setItem('colab_auth_token', authToken);
+        setStorage('colab_auth_token', authToken);
         showDashboard();
       } else {
         errBox.textContent = data.error || 'Invalid credentials';
@@ -548,15 +573,15 @@
     customVpsSecret = $('#vpsSecretInput').value.trim();
 
     if (customVpsUrl) {
-      localStorage.setItem('colab_vps_url', customVpsUrl);
+      setStorage('colab_vps_url', customVpsUrl);
     } else {
-      localStorage.removeItem('colab_vps_url');
+      removeStorage('colab_vps_url');
     }
 
     if (customVpsSecret) {
-      localStorage.setItem('colab_vps_secret', customVpsSecret);
+      setStorage('colab_vps_secret', customVpsSecret);
     } else {
-      localStorage.removeItem('colab_vps_secret');
+      removeStorage('colab_vps_secret');
     }
 
     $('#vpsSettingsModal').style.display = 'none';
