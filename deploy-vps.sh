@@ -41,22 +41,31 @@ fi
 echo "📦 Installing project dependencies..."
 npm install
 
-# 5. Install Playwright & Chromium with System Dependencies (auto-detects Ubuntu 24.04/22.04)
+# 5. Fix Bin Permissions & Install Playwright Chromium with System Dependencies
+echo "🌐 Setting execution permissions on binaries..."
+chmod -R +x ./node_modules/.bin/ 2>/dev/null || true
+
 echo "🌐 Installing Playwright Chromium & OS-matched dependencies..."
-npx playwright install --with-deps chromium
+if command -v sudo >/dev/null 2>&1; then
+    sudo npx playwright install-deps chromium || true
+    npx playwright install chromium
+else
+    npx playwright install-deps chromium || true
+    npx playwright install chromium
+fi
 
 # 6. Configure Oracle Cloud Linux Firewall for Port 3000
 echo "🛡️ Configuring firewall for port 3000..."
 if command -v iptables >/dev/null 2>&1; then
-    sudo iptables -I INPUT 6 -m state --state NEW -p tcp --dport 3000 -j ACCEPT || true
-    sudo netfilter-persistent save || true
+    sudo iptables -I INPUT 6 -m state --state NEW -p tcp --dport 3000 -j ACCEPT 2>/dev/null || true
+    sudo netfilter-persistent save 2>/dev/null || true
 fi
 if command -v ufw >/dev/null 2>&1; then
-    sudo ufw allow 3000/tcp || true
+    sudo ufw allow 3000/tcp 2>/dev/null || true
 fi
 if command -v firewall-cmd >/dev/null 2>&1; then
-    sudo firewall-cmd --zone=public --add-port=3000/tcp --permanent || true
-    sudo firewall-cmd --reload || true
+    sudo firewall-cmd --zone=public --add-port=3000/tcp --permanent 2>/dev/null || true
+    sudo firewall-cmd --reload 2>/dev/null || true
 fi
 
 # 7. Start with PM2
