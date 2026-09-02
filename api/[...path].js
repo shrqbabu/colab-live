@@ -91,12 +91,15 @@ async function getRequestBody(req) {
 
 function parseVpsUrl(input) {
   if (!input || typeof input !== 'string') return null;
-  let raw = input.trim();
+  let raw = input.trim().replace(/^["'`\s]+|["'`\s]+$/g, '').trim();
   if (!raw) return null;
-  // If it's just 'http:', 'http://', 'https:', 'https://', 'undefined', 'null'
-  if (/^https?:\/*$/i.test(raw) || raw === 'undefined' || raw === 'null') {
+  // If it's just 'http:', 'http://', 'https:', 'https://', 'undefined', 'null', 'http', 'https'
+  if (/^https?:\/*$/i.test(raw) || raw === 'undefined' || raw === 'null' || raw === 'http' || raw === 'https') {
     return null;
   }
+  // Strip duplicate protocols or quotes inside
+  raw = raw.replace(/^https?:\/\/(https?:\/\/)+/i, '$1');
+  raw = raw.replace(/^["'`]+|["'`]+$/g, '').trim();
   // Ensure http:// or https:// prefix
   if (!/^https?:\/\//i.test(raw)) {
     raw = 'http://' + raw;
@@ -105,7 +108,8 @@ function parseVpsUrl(input) {
   raw = raw.replace(/\/+$/, '');
   try {
     const u = new URL(raw);
-    if (!u.hostname || u.hostname === 'http' || u.hostname === 'https' || u.hostname.length < 2) {
+    const host = u.hostname.replace(/^["'`]+|["'`]+$/g, '');
+    if (!host || host === 'http' || host === 'https' || host.length < 3 || host.includes('"') || host.includes("'")) {
       return null;
     }
     return u.origin;
