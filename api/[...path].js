@@ -89,6 +89,31 @@ async function getRequestBody(req) {
   });
 }
 
+function parseVpsUrl(input) {
+  if (!input || typeof input !== 'string') return null;
+  let raw = input.trim();
+  if (!raw) return null;
+  // If it's just 'http:', 'http://', 'https:', 'https://', 'undefined', 'null'
+  if (/^https?:\/*$/i.test(raw) || raw === 'undefined' || raw === 'null') {
+    return null;
+  }
+  // Ensure http:// or https:// prefix
+  if (!/^https?:\/\//i.test(raw)) {
+    raw = 'http://' + raw;
+  }
+  // Remove trailing slashes
+  raw = raw.replace(/\/+$/, '');
+  try {
+    const u = new URL(raw);
+    if (!u.hostname || u.hostname === 'http' || u.hostname === 'https' || u.hostname.length < 2) {
+      return null;
+    }
+    return u.origin;
+  } catch (_) {
+    return null;
+  }
+}
+
 module.exports = async function handler(req, res) {
   // Enable CORS
   try {
@@ -110,15 +135,8 @@ module.exports = async function handler(req, res) {
   }
 
   // 1. Determine Oracle VPS URL
-  let vpsUrl = process.env.VPS_URL || process.env.ORACLE_VPS_URL || req.headers['x-vps-url'];
-
-  // Clean trailing slashes
-  if (vpsUrl) {
-    vpsUrl = vpsUrl.trim().replace(/\/+$/, '');
-    if (!/^https?:\/\//i.test(vpsUrl)) {
-      vpsUrl = 'http://' + vpsUrl;
-    }
-  }
+  const rawVpsUrl = process.env.VPS_URL || process.env.ORACLE_VPS_URL || req.headers['x-vps-url'];
+  const vpsUrl = parseVpsUrl(rawVpsUrl);
 
   // 2. Resolve Path from Vercel dynamic catch-all route (req.query.path) or req.url
   let parsedPath = '';
@@ -171,7 +189,7 @@ module.exports = async function handler(req, res) {
   if (!vpsUrl) {
     return sendResponse(res, 503, {
       ok: false,
-      error: 'Oracle VPS URL not configured. Set VPS_URL environment variable in Vercel or configure it in the Dashboard UI settings.',
+      error: `Oracle VPS URL not configured or invalid (received: "${rawVpsUrl || ''}"). Please enter your valid VPS IP or domain, e.g. http://123.45.67.89`,
       code: 'VPS_URL_MISSING',
       hint: 'Add VPS_URL=http://<YOUR_ORACLE_IP> to Vercel Environment Variables or click "⚙️ VPS Settings" in the dashboard.',
     });

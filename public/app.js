@@ -34,8 +34,12 @@
   };
 
   let authToken = getStorage('colab_auth_token') || null;
-  let customVpsUrl = getStorage('colab_vps_url') || '';
-  let customVpsSecret = getStorage('colab_vps_secret') || '';
+  let customVpsUrl = (getStorage('colab_vps_url') || '').trim();
+  if (/^https?:\/*$/i.test(customVpsUrl) || customVpsUrl === 'undefined' || customVpsUrl === 'null') {
+    customVpsUrl = '';
+    removeStorage('colab_vps_url');
+  }
+  let customVpsSecret = (getStorage('colab_vps_secret') || '').trim();
   let autoScrollLogs = true;
   let sseSource = null;
   let currentStatus = null;
@@ -84,7 +88,7 @@
     if (authToken) {
       headers['Authorization'] = `Bearer ${authToken}`;
     }
-    if (customVpsUrl) {
+    if (customVpsUrl && !/^https?:\/*$/i.test(customVpsUrl) && customVpsUrl.length > 7) {
       headers['X-VPS-URL'] = customVpsUrl;
     }
     if (customVpsSecret) {
