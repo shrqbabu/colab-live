@@ -127,16 +127,19 @@ module.exports = async function handler(req, res) {
 
   // Determine requested path
   const rawUrl = req.url || '/';
-  let pathname = '/';
+  let parsedReqUrl;
   try {
-    pathname = new URL(rawUrl, 'http://localhost').pathname;
+    parsedReqUrl = new URL(rawUrl, 'http://localhost');
   } catch (_) {
-    pathname = (rawUrl || '/').split('?')[0];
+    parsedReqUrl = new URL('/', 'http://localhost');
   }
+
+  let pathname = parsedReqUrl.searchParams.get('__path') || parsedReqUrl.pathname || '/';
+  if (!pathname.startsWith('/')) pathname = '/' + pathname;
 
   // Check headers if rewritten by Vercel
   const xMatched = req.headers['x-matched-path'] || req.headers['x-forwarded-url'] || req.headers['x-original-url'];
-  if (xMatched && xMatched !== '/index.js') {
+  if (xMatched && xMatched !== '/index.js' && !parsedReqUrl.searchParams.has('__path')) {
     try {
       pathname = new URL(xMatched, 'http://localhost').pathname;
     } catch (_) {
@@ -164,8 +167,10 @@ module.exports = async function handler(req, res) {
       });
     }
 
-    const searchParams = rawUrl.includes('?') ? '?' + rawUrl.split('?')[1] : '';
-    const targetEndpoint = `${vpsUrl}/api${apiPath}${searchParams}`;
+    const forwardQueryParams = new URLSearchParams(parsedReqUrl.searchParams);
+    forwardQueryParams.delete('__path');
+    const forwardQueryStr = forwardQueryParams.toString() ? '?' + forwardQueryParams.toString() : '';
+    const targetEndpoint = `${vpsUrl}/api${apiPath}${forwardQueryStr}`;
 
     try {
       const targetParsed = new URL(targetEndpoint);
