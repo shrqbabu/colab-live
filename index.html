@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Colab Pro VPS Manager — 24/7 Cloud Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- ==================== LOGIN VIEW ==================== -->
+  <div id="loginView" class="auth-wrapper">
+    <div class="auth-card">
+      <div class="auth-header">
+        <div class="auth-logo">⚡</div>
+        <h2>Colab Pro Manager</h2>
+        <p>24/7 VPS Automation & Live Session Monitor</p>
+      </div>
+
+      <form id="loginForm" class="auth-form">
+        <div class="input-group">
+          <label for="loginEmail">Email Address</label>
+          <input type="email" id="loginEmail" placeholder="admin@colab.pro" required autocomplete="username" />
+        </div>
+
+        <div class="input-group">
+          <label for="loginPassword">Password</label>
+          <div class="password-wrapper">
+            <input type="password" id="loginPassword" placeholder="••••••••••••" required autocomplete="current-password" />
+            <button type="button" class="btn-toggle-pw" id="togglePasswordBtn">👁</button>
+          </div>
+        </div>
+
+        <div id="loginError" class="alert-box error" style="display: none;"></div>
+
+        <button type="submit" class="btn btn-primary btn-block" id="loginSubmitBtn">
+          <span>Sign In to Dashboard</span> ➔
+        </button>
+
+        <div class="quick-fill-box">
+          <span>Default credentials:</span>
+          <button type="button" class="btn-link" id="quickFillBtn">Auto-fill (admin@colab.pro / password123)</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ==================== DASHBOARD VIEW ==================== -->
+  <div id="dashboardView" class="dashboard-wrapper" style="display: none;">
+    <!-- Navbar -->
+    <header class="navbar">
+      <div class="nav-left">
+        <div class="brand-logo">⚡</div>
+        <div class="brand-info">
+          <h1>Colab Pro VPS</h1>
+          <span class="sub-text" id="headerNotebookName">Loading notebook...</span>
+        </div>
+      </div>
+
+      <div class="nav-right">
+        <div class="vps-node-pill" id="vpsNodePill" title="Oracle VPS Connection Status — Click to configure">
+          <span class="vps-node-dot" id="vpsNodeDot"></span>
+          <span id="vpsNodeText">Oracle VPS: Connecting</span>
+        </div>
+
+        <button class="btn btn-secondary btn-sm" id="openVpsSettingsBtn" title="Configure Oracle VPS Backend">
+          🌐 VPS Node
+        </button>
+
+        <div class="status-badge" id="masterStatusBadge">
+          <span class="status-dot"></span>
+          <span class="status-label" id="masterStatusText">CONNECTING</span>
+        </div>
+
+        <div class="vps-info-pill">
+          <span>VPS Uptime:</span>
+          <strong id="vpsUptimeText">0m</strong>
+        </div>
+
+        <button class="btn btn-secondary btn-sm" id="logoutBtn">
+          🚪 Logout
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Content Container -->
+    <main class="main-content">
+
+      <!-- Action Banner -->
+      <section class="control-panel card">
+        <div class="control-header">
+          <div>
+            <h3>🎮 Remote Process Controls</h3>
+            <p class="desc">Manage headless Playwright browser instance and session execution</p>
+          </div>
+          <div class="quick-status-indicators">
+            <span id="headlessBadge" class="mini-pill">Headless: ON</span>
+            <span id="autoRunBadge" class="mini-pill">Auto-Run: ON</span>
+          </div>
+        </div>
+
+        <div class="control-btn-grid">
+          <button class="btn btn-success" id="startWorkerBtn">
+            ▶️ Start Worker
+          </button>
+          <button class="btn btn-danger" id="stopWorkerBtn">
+            ⏹️ Stop Worker
+          </button>
+          <button class="btn btn-warning" id="restartWorkerBtn">
+            🔄 Restart Worker
+          </button>
+          <button class="btn btn-primary" id="runAllBtn">
+            ⚡ Run All Cells (Ctrl+F9)
+          </button>
+          <button class="btn btn-secondary" id="reconnectBtn">
+            🔌 Force Reconnect
+          </button>
+          <button class="btn btn-info" id="viewScreenshotBtn">
+            📸 View Live Screen
+          </button>
+        </div>
+      </section>
+
+      <!-- Live Metrics Grid -->
+      <section class="metrics-grid">
+        <!-- Session Duration -->
+        <div class="metric-card card">
+          <div class="metric-title">Active Session Duration</div>
+          <div class="metric-value-large" id="sessionTimerText">00:00:00</div>
+          <div class="metric-sub" id="sessionStartSub">Session started: —</div>
+        </div>
+
+        <!-- Total Uptime -->
+        <div class="metric-card card">
+          <div class="metric-title">Total Active Runtime</div>
+          <div class="metric-value-large" id="totalRuntimeText">0m</div>
+          <div class="metric-sub">Across all reconnect stretches</div>
+        </div>
+
+        <!-- RAM Usage -->
+        <div class="metric-card card">
+          <div class="metric-title">
+            <span>RAM (Colab Cloud)</span>
+            <span id="ramDetailText" class="metric-pct">—</span>
+          </div>
+          <div class="progress-bar-bg">
+            <div class="progress-bar-fill" id="ramProgressFill" style="width: 0%;"></div>
+          </div>
+          <div class="metric-sub" id="ramSubText">Waiting for runtime metrics</div>
+        </div>
+
+        <!-- Disk Usage -->
+        <div class="metric-card card">
+          <div class="metric-title">
+            <span>Disk Storage</span>
+            <span id="diskDetailText" class="metric-pct">—</span>
+          </div>
+          <div class="progress-bar-bg">
+            <div class="progress-bar-fill" id="diskProgressFill" style="width: 0%;"></div>
+          </div>
+          <div class="metric-sub" id="diskSubText">Waiting for disk stats</div>
+        </div>
+      </section>
+
+      <!-- Split Area: Terminal Logs & Configuration -->
+      <div class="dashboard-split">
+
+        <!-- Console Logs Viewer -->
+        <section class="card logs-section">
+          <div class="section-header">
+            <div class="title-with-icon">
+              <span class="terminal-icon">📟</span>
+              <h3>Live Worker Logs</h3>
+            </div>
+            <div class="logs-actions">
+              <input type="text" id="logFilterInput" placeholder="Filter logs..." class="search-input" />
+              <button class="btn btn-icon" id="clearLogsBtn" title="Clear Logs">🗑️</button>
+              <button class="btn btn-icon" id="scrollToggleBtn" title="Auto-scroll Toggle">⬇️</button>
+            </div>
+          </div>
+
+          <div class="terminal-window" id="terminalLogs">
+            <div class="log-entry info">[System] Waiting for live events stream...</div>
+          </div>
+        </section>
+
+        <!-- Profile & Settings Panel -->
+        <section class="card settings-section">
+          <div class="section-header">
+            <div class="title-with-icon">
+              <span>⚙️</span>
+              <h3>Profile & Configuration</h3>
+            </div>
+            <button class="btn btn-secondary btn-sm" id="importJsonModalBtn">
+              📥 Import Chrome Profile JSON
+            </button>
+            <button class="btn btn-secondary btn-sm" id="cookieImportBtn">
+              🍪 Google Session Cookies
+            </button>
+          </div>
+
+          <form id="configForm" class="settings-form">
+            <div class="input-group">
+              <label for="configNotebookUrl">Google Colab Notebook URL</label>
+              <input type="url" id="configNotebookUrl" placeholder="https://colab.research.google.com/drive/..." required />
+            </div>
+
+            <div class="form-row-2">
+              <div class="input-group">
+                <label for="configKeepalive">Keep-alive Interval (Sec)</label>
+                <input type="number" id="configKeepalive" min="10" max="600" value="60" />
+              </div>
+              <div class="input-group">
+                <label for="configRetry">Reconnect Delay (Sec)</label>
+                <input type="number" id="configRetry" min="5" max="300" value="10" />
+              </div>
+            </div>
+
+            <div class="toggles-list">
+              <label class="checkbox-label">
+                <input type="checkbox" id="configAutoRun" checked />
+                <span>⚡ Auto "Run All" on connect / reconnect</span>
+              </label>
+
+              <label class="checkbox-label">
+                <input type="checkbox" id="configHeadless" checked />
+                <span>🕶️ Run Headless (Recommended on VPS)</span>
+              </label>
+            </div>
+
+            <div class="form-actions">
+              <button type="submit" class="btn btn-primary" id="saveConfigBtn">
+                💾 Save Configuration
+              </button>
+            </div>
+          </form>
+
+          <hr class="divider" />
+
+          <!-- Change Admin Password -->
+          <div class="security-card">
+            <h4>🔐 Update Dashboard Password</h4>
+            <form id="passwordForm" class="password-form">
+              <div class="input-group">
+                <input type="password" id="newPasswordInput" placeholder="New Password (min 6 chars)" required />
+              </div>
+              <button type="submit" class="btn btn-secondary btn-sm" id="updatePasswordBtn">
+                Update Password
+              </button>
+            </form>
+          </div>
+        </section>
+      </div>
+
+    </main>
+  </div>
+
+  <!-- ==================== LIVE SCREENSHOT MODAL ==================== -->
+  <div id="screenshotModal" class="modal-overlay" style="display: none;">
+    <div class="modal-card modal-lg">
+      <div class="modal-header">
+        <h3>📸 Live Browser Viewport Preview</h3>
+        <div class="modal-actions">
+          <button class="btn btn-secondary btn-sm" id="refreshScreenshotBtn">🔄 Refresh Snapshot</button>
+          <button class="btn-close" id="closeScreenshotModalBtn">✕</button>
+        </div>
+      </div>
+      <div class="modal-body">
+        <div id="screenshotLoading" class="loader-box">
+          <div class="spinner"></div>
+          <p>Capturing snapshot from Playwright...</p>
+        </div>
+        <img id="screenshotImg" alt="Colab Live Screenshot" style="display: none;" />
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== IMPORT JSON PROFILE MODAL ==================== -->
+  <div id="importModal" class="modal-overlay" style="display: none;">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>📥 Import Chrome Extension Profile JSON</h3>
+        <button class="btn-close" id="closeImportModalBtn">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="modal-desc">
+          Colab Pro Monitor Chrome extension se <b>"📄 Save JSON"</b> dabakar download ki gayi file ka content yahan paste karein:
+        </p>
+
+        <textarea id="importJsonTextarea" placeholder='Paste your exported JSON here: { "profile": { "proxyUrl": "...", "token": "..." } }' rows="8"></textarea>
+
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" id="cancelImportBtn">Cancel</button>
+          <button type="button" class="btn btn-primary" id="confirmImportBtn">✅ Apply Profile Data</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== IMPORT GOOGLE SESSION COOKIES MODAL ==================== -->
+  <div id="cookieImportModal" class="modal-overlay" style="display: none;">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>🍪 Import Google Session Cookies</h3>
+        <button class="btn-close" id="closeCookieImportBtn">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="modal-desc">
+          Chrome ki <b>Cookie-Editor</b> extension se <b>Export → as JSON</b> karke copied content yahan paste karein
+          (colab.research.google.com pe logged-in hokar). Yeh Google session cookies profile mein save ho jayengi —
+          worker/keeper ko login nahi maangna padega.
+        </p>
+
+        <textarea id="cookieJsonTextarea" placeholder='Paste Cookie-Editor JSON here: [{ "domain": ".google.com", "name": "SID", "value": "...", ... }]' rows="10"></textarea>
+
+        <div id="cookieImportResult" class="alert-box info" style="display: none;"></div>
+
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" id="cancelCookieImportBtn">Cancel</button>
+          <button type="button" class="btn btn-primary" id="confirmCookieImportBtn">✅ Import Cookies</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== ORACLE VPS SETTINGS MODAL ==================== -->
+  <div id="vpsSettingsModal" class="modal-overlay" style="display: none;">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>🌐 Oracle VPS Automation Backend Node</h3>
+        <button class="btn-close" id="closeVpsSettingsBtn">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="modal-desc">
+          Yeh UI & API Vercel pe host ho sakti hai jabki Playwright logic Oracle VPS pe chalega.
+          Apna Oracle VPS Public IP / Domain aur API Secret yahan configure karein:
+        </p>
+
+        <form id="vpsSettingsForm" class="settings-form">
+          <div class="input-group">
+            <label for="vpsUrlInput">Oracle VPS Backend URL</label>
+            <input type="url" id="vpsUrlInput" placeholder="http://123.45.67.89 or http://123.45.67.89:80" />
+            <small style="color:var(--text-muted); font-size: 0.8rem; margin-top: 4px; display: block;">
+              (Leave empty to use Vercel <code>VPS_URL</code> Environment Variable)
+            </small>
+          </div>
+
+          <div class="input-group">
+            <label for="vpsSecretInput">VPS API Secret (Optional)</label>
+            <input type="password" id="vpsSecretInput" placeholder="Enter API_SECRET if set on VPS" />
+          </div>
+
+          <div id="vpsTestResult" class="alert-box info" style="display: none;"></div>
+
+          <div class="modal-footer" style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px;">
+            <button type="button" class="btn btn-secondary" id="testVpsBtn">⚡ Test Connection</button>
+            <button type="submit" class="btn btn-primary" id="saveVpsSettingsBtn">💾 Save & Apply</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notification -->
+  <div id="toast" class="toast-notification" style="display: none;"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>

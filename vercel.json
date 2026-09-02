@@ -2,28 +2,10 @@
   "version": 2,
   "name": "colab-pro-manager",
   "cleanUrls": true,
-  "builds": [
+  "rewrites": [
     {
-      "src": "api/[...path].js",
-      "use": "@vercel/node"
-    },
-    {
-      "src": "public/**",
-      "use": "@vercel/static"
-    }
-  ],
-  "routes": [
-    {
-      "src": "/api/(.*)",
-      "dest": "/api/[...path].js"
-    },
-    {
-      "src": "/(style\\.css|app\\.js)",
-      "dest": "/public/$1"
-    },
-    {
-      "src": "/(.*)",
-      "dest": "/public/index.html"
+      "source": "/api/:path*",
+      "destination": "/api/[...path]"
     }
   ],
   "headers": [
