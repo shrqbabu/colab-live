@@ -1,12 +1,4 @@
-# Files that should NOT be deployed or executed on Vercel Serverless
-# (These run exclusively on Oracle Cloud VPS)
-server.js
-worker.js
-colab_keeper.js
-colab-login.js
-import-cookies.js
+# Temporary runtime files
 profile/
 *.log
-deploy-vps.sh
-ecosystem.config.js
-node_modules/
+.git/

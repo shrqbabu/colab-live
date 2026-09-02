@@ -1,15 +1,12 @@
 {
   "version": 2,
   "name": "colab-pro-manager",
+  "outputDirectory": "public",
   "cleanUrls": true,
   "rewrites": [
     {
-      "source": "/api/:path*",
+      "source": "/api/(.*)",
       "destination": "/api/[...path]"
-    },
-    {
-      "source": "/(.*)",
-      "destination": "/public/$1"
     }
   ],
   "headers": [
