@@ -32,18 +32,46 @@ module.exports = async function handler(req, res) {
     }
   }
 
-  // 2. Gateway Health / Connection Config Info Route
-  const rawUrl = req.url || '';
-  const parsedPath = rawUrl.replace(/^\/api/, '') || '/';
+  // 2. Resolve Path from Vercel dynamic catch-all route (req.query.path) or req.url
+  let parsedPath = '';
+  if (req.query && req.query.path) {
+    if (Array.isArray(req.query.path)) {
+      parsedPath = '/' + req.query.path.join('/');
+    } else {
+      parsedPath = '/' + req.query.path;
+    }
+  } else {
+    const rawPath = (req.url || '').split('?')[0];
+    parsedPath = rawPath.replace(/^\/api(\/\[\.\.\.path\])?/, '') || '/';
+    if (!parsedPath.startsWith('/')) parsedPath = '/' + parsedPath;
+  }
 
+  // Preserve query string (excluding Vercel's internal path parameter)
+  let queryString = '';
+  if (req.query) {
+    const queryParams = new URLSearchParams();
+    for (const [key, val] of Object.entries(req.query)) {
+      if (key !== 'path') {
+        if (Array.isArray(val)) {
+          val.forEach((v) => queryParams.append(key, v));
+        } else {
+          queryParams.append(key, val);
+        }
+      }
+    }
+    const qs = queryParams.toString();
+    if (qs) queryString = '?' + qs;
+  }
+
+  // Gateway Info Route
   if (parsedPath === '/vps-gateway-status' || parsedPath === '/gateway-info') {
     return res.status(200).json({
       ok: true,
       service: 'vercel-worker-api-gateway',
       vpsConfigured: Boolean(vpsUrl),
-      vpsUrl: vpsUrl ? vpsUrl.replace(/:\/\/[^@]*@/, '://') : null, // Mask any inline credentials
+      vpsUrl: vpsUrl ? vpsUrl.replace(/:\/\/[^@]*@/, '://') : null,
       environment: process.env.NODE_ENV || 'production',
-      timestamp: Date.now()
+      timestamp: Date.now(),
     });
   }
 
@@ -52,12 +80,12 @@ module.exports = async function handler(req, res) {
       ok: false,
       error: 'Oracle VPS URL not configured. Set VPS_URL environment variable in Vercel or configure it in the Dashboard UI settings.',
       code: 'VPS_URL_MISSING',
-      hint: 'Add VPS_URL=http://<YOUR_ORACLE_IP>:3000 to Vercel Environment Variables or click "⚙️ VPS Settings" in the dashboard.'
+      hint: 'Add VPS_URL=http://<YOUR_ORACLE_IP> to Vercel Environment Variables or click "⚙️ VPS Settings" in the dashboard.',
     });
   }
 
   // 3. Resolve Target Endpoint on Oracle VPS
-  const targetEndpoint = `${vpsUrl}/api${parsedPath.startsWith('/') ? parsedPath : '/' + parsedPath}`;
+  const targetEndpoint = `${vpsUrl}/api${parsedPath.startsWith('/') ? parsedPath : '/' + parsedPath}${queryString}`;
 
   try {
     const targetParsed = new URL(targetEndpoint);

@@ -160,9 +160,13 @@
     submitBtn.innerHTML = '<span>Verifying...</span> ⏳';
 
     try {
+      const loginHeaders = { 'Content-Type': 'application/json' };
+      if (customVpsUrl) loginHeaders['X-VPS-URL'] = customVpsUrl;
+      if (customVpsSecret) loginHeaders['X-API-Secret'] = customVpsSecret;
+
       const res = await fetch('/api/login', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: loginHeaders,
         body: JSON.stringify({ email, password }),
       });
       const data = await res.json();
