@@ -1,11 +1,21 @@
 {
   "version": 2,
   "name": "colab-pro-manager",
-  "functions": {
-    "api/**/*.js": {
-      "maxDuration": 30
+  "cleanUrls": true,
+  "builds": [
+    {
+      "src": "api/[...path].js",
+      "use": "@vercel/node"
+    },
+    {
+      "src": "index.js",
+      "use": "@vercel/node"
+    },
+    {
+      "src": "public/**",
+      "use": "@vercel/static"
     }
-  },
+  ],
   "routes": [
     {
       "src": "/api/(.*)",
