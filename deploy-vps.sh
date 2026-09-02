@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ============================================================
 #  🚀 Oracle Cloud VPS Automated Setup Script
-#  Installs Node.js 20, PM2, Playwright, Chromium & dependencies
+#  Supports Ubuntu 24.04 (Noble), Ubuntu 22.04, Debian & Oracle Linux
 # ============================================================
 
 set -e
@@ -10,15 +10,15 @@ echo "========================================================"
 echo "⚡ Setting up Colab Automation Engine on Oracle Cloud VPS"
 echo "========================================================"
 
-# 1. Update OS Packages
+# 1. Update OS Packages & Install Essential Utilities
 if command -v apt-get >/dev/null 2>&1; then
     echo "📦 Detected Ubuntu/Debian. Updating system packages..."
-    sudo apt-get update -y && sudo apt-get upgrade -y
-    sudo apt-get install -y curl wget git unzip xvfb libnss3 libatk-bridge2.0-0 libx11-xcb1 libxcomposite1 libxdamage1 libxrandr2 libgbm1 libasound2 libpangocairo-1.0-0 libpango-1.0-0 libcups2 libdrm2
+    sudo apt-get update -y
+    sudo apt-get install -y curl wget git unzip xvfb ca-certificates gnupg
 elif command -v dnf >/dev/null 2>&1; then
     echo "📦 Detected Oracle Linux / RHEL / Fedora. Updating packages..."
     sudo dnf update -y
-    sudo dnf install -y curl wget git unzip xorg-x11-server-Xvfb nss atk libXcomposite libXdamage libXrandr mesa-libgbm alsa-lib pango cups-libs
+    sudo dnf install -y curl wget git unzip xorg-x11-server-Xvfb ca-certificates
 fi
 
 # 2. Install Node.js 20 LTS if not present
@@ -41,8 +41,8 @@ fi
 echo "📦 Installing project dependencies..."
 npm install
 
-# 5. Install Playwright & Chromium with System Dependencies
-echo "🌐 Installing Playwright Chromium & system libraries..."
+# 5. Install Playwright & Chromium with System Dependencies (auto-detects Ubuntu 24.04/22.04)
+echo "🌐 Installing Playwright Chromium & OS-matched dependencies..."
 npx playwright install --with-deps chromium
 
 # 6. Configure Oracle Cloud Linux Firewall for Port 3000
@@ -61,6 +61,7 @@ fi
 
 # 7. Start with PM2
 echo "🚀 Starting server with PM2..."
+pm2 delete colab-pro-vps 2>/dev/null || true
 pm2 start ecosystem.config.js
 pm2 save
 
@@ -68,8 +69,8 @@ echo ""
 echo "========================================================"
 echo "🎉 Setup Complete! Oracle VPS Automation Server is Running"
 echo "========================================================"
-echo "👉 Public API Endpoint: http://$(curl -s ifconfig.me):3000"
-echo "👉 Health Check:        http://$(curl -s ifconfig.me):3000/api/health"
+echo "👉 Public API Endpoint: http://$(curl -s ifconfig.me 2>/dev/null || echo 'YOUR_VPS_IP'):3000"
+echo "👉 Health Check:        http://$(curl -s ifconfig.me 2>/dev/null || echo 'YOUR_VPS_IP'):3000/api/health"
 echo "👉 PM2 Status:          pm2 status"
 echo "👉 PM2 Logs:            pm2 logs colab-pro-vps"
 echo "========================================================"
