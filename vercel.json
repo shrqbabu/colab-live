@@ -1,7 +1,12 @@
 {
   "version": 2,
   "name": "colab-pro-manager",
-  "cleanUrls": true,
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "/index.js"
+    }
+  ],
   "headers": [
     {
       "source": "/api/(.*)",
