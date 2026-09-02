@@ -267,7 +267,7 @@ module.exports = async function handler(req, res) {
           ok: false,
           error: `Failed to reach Oracle VPS (${vpsUrl}): ${err.message}`,
           code: 'VPS_UNREACHABLE',
-          hint: 'Ensure your Oracle Cloud VPS security list allows ingress on port 3000 and PM2 is running.'
+          hint: 'Ensure your Oracle Cloud VPS security list allows ingress on port 80 (or 3000) and PM2 is running.'
         });
       } else {
         try { res.end(); } catch (_) {}

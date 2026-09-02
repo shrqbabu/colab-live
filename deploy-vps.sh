@@ -54,16 +54,19 @@ else
     npx playwright install chromium
 fi
 
-# 6. Configure Oracle Cloud Linux Firewall for Port 3000
-echo "🛡️ Configuring firewall for port 3000..."
+# 6. Configure Oracle Cloud Linux Firewall for Port 80 & 3000
+echo "🛡️ Configuring firewall for port 80 & 3000..."
 if command -v iptables >/dev/null 2>&1; then
+    sudo iptables -I INPUT 6 -m state --state NEW -p tcp --dport 80 -j ACCEPT 2>/dev/null || true
     sudo iptables -I INPUT 6 -m state --state NEW -p tcp --dport 3000 -j ACCEPT 2>/dev/null || true
     sudo netfilter-persistent save 2>/dev/null || true
 fi
 if command -v ufw >/dev/null 2>&1; then
+    sudo ufw allow 80/tcp 2>/dev/null || true
     sudo ufw allow 3000/tcp 2>/dev/null || true
 fi
 if command -v firewall-cmd >/dev/null 2>&1; then
+    sudo firewall-cmd --zone=public --add-port=80/tcp --permanent 2>/dev/null || true
     sudo firewall-cmd --zone=public --add-port=3000/tcp --permanent 2>/dev/null || true
     sudo firewall-cmd --reload 2>/dev/null || true
 fi
@@ -78,9 +81,9 @@ echo ""
 echo "========================================================"
 echo "🎉 Setup Complete! Oracle VPS Automation Server is Running"
 echo "========================================================"
-echo "👉 Public API Endpoint: http://$(curl -s ifconfig.me 2>/dev/null || echo 'YOUR_VPS_IP'):3000"
-echo "👉 Health Check:        http://$(curl -s ifconfig.me 2>/dev/null || echo 'YOUR_VPS_IP'):3000/api/health"
+echo "👉 Public API Endpoint: http://$(curl -s ifconfig.me 2>/dev/null || echo 'YOUR_VPS_IP')"
+echo "👉 Health Check:        http://$(curl -s ifconfig.me 2>/dev/null || echo 'YOUR_VPS_IP')/api/health"
 echo "👉 PM2 Status:          pm2 status"
 echo "👉 PM2 Logs:            pm2 logs colab-pro-vps"
 echo "========================================================"
-echo "Next: Put this Public URL (http://<IP>:3000) into your Vercel Environment Variables as VPS_URL"
+echo "Next: Put this Public URL (http://<IP>) into your Vercel Environment Variables as VPS_URL"

@@ -1,6 +1,6 @@
 {
   "notebookUrl": "https://colab.research.google.com/drive/1rbcpyiaEneeLuqpczvYaJn3soEFR7LkQ",
-  "port": 3000,
+  "port": 80,
   "headless": true,
   "keepaliveMs": 60000,
   "retryConnectMs": 10000,
