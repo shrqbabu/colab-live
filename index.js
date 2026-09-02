@@ -126,9 +126,26 @@ module.exports = async function handler(req, res) {
     return res.end();
   }
 
-  const rawUrl = req.url || '/';
-  const parsedReqUrl = new URL(rawUrl, 'http://localhost');
-  const pathname = parsedReqUrl.pathname;
+  let pathname = '/';
+  const matchedHeader = req.headers['x-matched-path'] || req.headers['x-forwarded-url'] || req.headers['x-original-url'];
+  if (matchedHeader) {
+    try {
+      pathname = new URL(matchedHeader, 'http://localhost').pathname;
+    } catch (_) {
+      pathname = matchedHeader.split('?')[0];
+    }
+  } else if (req.url) {
+    try {
+      pathname = new URL(req.url, 'http://localhost').pathname;
+    } catch (_) {
+      pathname = req.url.split('?')[0];
+    }
+  }
+
+  // If path is literally '/index.js' (and no matched-path header), treat as '/'
+  if (pathname === '/index.js') {
+    pathname = '/';
+  }
 
   // ── 1. Handle API requests (/api/*) ──
   if (pathname.startsWith('/api/') || pathname === '/api') {
