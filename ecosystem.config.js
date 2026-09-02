@@ -20,7 +20,6 @@ module.exports = {
         NODE_ENV: 'production',
         PORT: 80,
         HEADLESS: 'true',
-        PLAYWRIGHT_BROWSERS_PATH: '0',
       },
     },
   ],
