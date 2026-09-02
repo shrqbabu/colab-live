@@ -18,11 +18,9 @@ module.exports = {
       time: true,
       env: {
         NODE_ENV: 'production',
-        PORT: 3000,
+        PORT: 80,
         HEADLESS: 'true',
-        // Optional: API_SECRET: 'your_super_secret_key_12345',
-        // Optional: ADMIN_EMAIL: 'admin@colab.pro',
-        // Optional: ADMIN_PASSWORD: 'password123',
+        PLAYWRIGHT_BROWSERS_PATH: '0',
       },
     },
   ],

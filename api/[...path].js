@@ -75,19 +75,31 @@ module.exports = async function handler(req, res) {
       forwardHeaders['x-api-secret'] = apiSecret;
     }
 
-    // Read request body if present
+    // Read request body safely (handles pre-parsed object, string, buffer or stream)
     let bodyBuffer = null;
     if (['POST', 'PUT', 'PATCH'].includes(req.method.toUpperCase())) {
-      if (typeof req.body === 'object' && req.body !== null && !Buffer.isBuffer(req.body)) {
-        bodyBuffer = Buffer.from(JSON.stringify(req.body));
-        forwardHeaders['content-type'] = 'application/json';
-        forwardHeaders['content-length'] = Buffer.byteLength(bodyBuffer);
-      } else if (typeof req.body === 'string') {
-        bodyBuffer = Buffer.from(req.body);
-        forwardHeaders['content-length'] = Buffer.byteLength(bodyBuffer);
-      } else if (Buffer.isBuffer(req.body)) {
-        bodyBuffer = req.body;
-        forwardHeaders['content-length'] = req.body.length;
+      if (req.body) {
+        if (typeof req.body === 'object' && !Buffer.isBuffer(req.body)) {
+          bodyBuffer = Buffer.from(JSON.stringify(req.body));
+        } else if (typeof req.body === 'string') {
+          bodyBuffer = Buffer.from(req.body);
+        } else if (Buffer.isBuffer(req.body)) {
+          bodyBuffer = req.body;
+        }
+      } else {
+        bodyBuffer = await new Promise((resolve) => {
+          const chunks = [];
+          req.on('data', (chunk) => chunks.push(chunk));
+          req.on('end', () => resolve(Buffer.concat(chunks)));
+          req.on('error', () => resolve(Buffer.alloc(0)));
+        });
+      }
+
+      if (bodyBuffer && bodyBuffer.length > 0) {
+        forwardHeaders['content-length'] = bodyBuffer.length;
+        if (!forwardHeaders['content-type']) {
+          forwardHeaders['content-type'] = 'application/json';
+        }
       }
     }
 
