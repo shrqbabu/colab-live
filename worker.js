@@ -167,6 +167,39 @@ class ColabWorker extends EventEmitter {
       }
     }
 
+    // Search in Playwright's ms-playwright cache directories (~/.cache/ms-playwright)
+    try {
+      const os = require('os');
+      const cacheDirs = [
+        path.join(os.homedir(), '.cache', 'ms-playwright'),
+        '/home/ubuntu/.cache/ms-playwright',
+        '/root/.cache/ms-playwright',
+        path.join(this.baseDir, 'node_modules', 'playwright-core', '.local-browsers'),
+        path.join(process.cwd(), 'node_modules', 'playwright-core', '.local-browsers'),
+      ];
+
+      for (const cDir of cacheDirs) {
+        if (fs.existsSync(cDir)) {
+          const subdirs = fs.readdirSync(cDir);
+          for (const sub of subdirs) {
+            const subPath = path.join(cDir, sub);
+            const possibleBinaries = [
+              path.join(subPath, 'chrome-linux', 'chrome'),
+              path.join(subPath, 'chrome-headless-shell-linux64', 'chrome-headless-shell'),
+              path.join(subPath, 'chrome-win', 'chrome.exe'),
+              path.join(subPath, 'chrome-win64', 'chrome.exe'),
+            ];
+            for (const pb of possibleBinaries) {
+              if (fs.existsSync(pb)) {
+                this.log(`Found cached Playwright Chromium at: ${pb}`, 'info');
+                return pb;
+              }
+            }
+          }
+        }
+      }
+    } catch (_) {}
+
     // Fall back to Playwright's bundled Chromium
     try {
       const bundled = chromium.executablePath();
