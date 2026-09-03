@@ -274,28 +274,28 @@ module.exports = async function handler(req, res) {
     }
 
     // ── Worker Controls ──
-    if (apiPath === '/worker/start' && req.method === 'POST') {
+    if ((apiPath === '/worker/start' || apiPath === '/start') && req.method === 'POST') {
       const result = await worker.start();
       return sendResponse(res, result.ok ? 200 : 500, result);
     }
 
-    if (apiPath === '/worker/stop' && req.method === 'POST') {
+    if ((apiPath === '/worker/stop' || apiPath === '/stop') && req.method === 'POST') {
       const result = await worker.stop();
       return sendResponse(res, 200, result);
     }
 
-    if (apiPath === '/worker/restart' && req.method === 'POST') {
+    if ((apiPath === '/worker/restart' || apiPath === '/restart') && req.method === 'POST') {
       await worker.stop();
       setTimeout(() => worker.start(), 1000);
       return sendResponse(res, 200, { ok: true });
     }
 
-    if (apiPath === '/worker/run-all' && req.method === 'POST') {
+    if ((apiPath === '/worker/run-all' || apiPath === '/run-all') && req.method === 'POST') {
       const result = await worker.triggerColabRunAll();
       return sendResponse(res, result.ok ? 200 : 500, result);
     }
 
-    if (apiPath === '/worker/reconnect' && req.method === 'POST') {
+    if ((apiPath === '/worker/reconnect' || apiPath === '/reconnect') && req.method === 'POST') {
       const result = await worker.forceReconnect();
       return sendResponse(res, 200, result);
     }
@@ -339,7 +339,7 @@ module.exports = async function handler(req, res) {
       }
     }
 
-    if (apiPath === '/cookies/import' && req.method === 'POST') {
+    if ((apiPath === '/cookies/import' || apiPath === '/cookies') && req.method === 'POST') {
       try {
         const body = await parseJsonBody(req);
         const result = await worker.importCookies(body);

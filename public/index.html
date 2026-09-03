@@ -1,375 +1,331 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0" />
-  <meta name="theme-color" content="#07090e" />
-  <meta name="apple-mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <title>Colab Pro VPS Manager — 24/7 Cloud Dashboard</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
+  <meta name="theme-color" content="#07090e">
+  <title>Google Cloud Shell & Colab 24/7 Manager</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css" />
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-
-  <!-- ==================== LOGIN VIEW ==================== -->
-  <div id="loginView" class="auth-wrapper">
-    <div class="auth-card">
-      <div class="auth-header">
-        <div class="auth-logo">⚡</div>
-        <h2>Colab Pro Manager</h2>
-        <p>24/7 VPS Automation & Live Session Monitor</p>
-      </div>
-
-      <form id="loginForm" class="auth-form">
-        <div class="input-group">
-          <label for="loginEmail">Email Address</label>
-          <input type="email" id="loginEmail" placeholder="admin@colab.pro" required autocomplete="username" />
+  <div class="app-container">
+    <!-- TOP NAVBAR / HEADER -->
+    <header class="app-header">
+      <div class="header-brand">
+        <div class="logo-icon-wrapper">
+          <div class="logo-icon" id="modeLogo">☁️</div>
+          <span class="logo-pulse"></span>
         </div>
-
-        <div class="input-group">
-          <label for="loginPassword">Password</label>
-          <div class="password-wrapper">
-            <input type="password" id="loginPassword" placeholder="••••••••••••" required autocomplete="current-password" />
-            <button type="button" class="btn-toggle-pw" id="togglePasswordBtn">👁</button>
+        <div class="brand-text">
+          <div class="title-row">
+            <h1>Google Automation Manager</h1>
+            <span class="mode-badge" id="activeModeBadge">Cloud Shell Mode</span>
           </div>
-        </div>
-
-        <div id="loginError" class="alert-box error" style="display: none;"></div>
-
-        <button type="submit" class="btn btn-primary btn-block" id="loginSubmitBtn">
-          <span>Sign In to Dashboard</span> ➔
-        </button>
-
-        <div class="quick-fill-box">
-          <span>Default credentials:</span>
-          <button type="button" class="btn-link" id="quickFillBtn">Auto-fill (admin@colab.pro / password123)</button>
-        </div>
-      </form>
-    </div>
-  </div>
-
-  <!-- ==================== DASHBOARD VIEW ==================== -->
-  <div id="dashboardView" class="dashboard-wrapper" style="display: none;">
-    <!-- Navbar -->
-    <header class="navbar">
-      <div class="nav-left">
-        <div class="brand-logo">⚡</div>
-        <div class="brand-info">
-          <h1>Colab Pro VPS</h1>
-          <span class="sub-text" id="headerNotebookName">Loading notebook...</span>
+          <p class="subtitle">24/7 Persistent Headless Automation & Keep-Alive Gateway</p>
         </div>
       </div>
-
-      <div class="nav-right">
-        <div class="vps-node-pill" id="vpsNodePill" title="Oracle VPS Connection Status — Click to configure">
-          <span class="vps-node-dot" id="vpsNodeDot"></span>
-          <span id="vpsNodeText">Oracle VPS: Connecting</span>
+      <div class="header-actions">
+        <div class="status-pill" id="globalStatusPill">
+          <span class="status-dot status-idle"></span>
+          <span class="status-text" id="globalStatusText">IDLE</span>
         </div>
-
-        <button class="btn btn-secondary btn-sm" id="openVpsSettingsBtn" title="Configure Oracle VPS Backend">
-          🌐 VPS Node
+        <button id="btnCookiesModal" class="btn btn-secondary btn-nav">
+          <span class="btn-icon">🍪</span> Cookies & Profile
         </button>
-
-        <div class="status-badge" id="masterStatusBadge">
-          <span class="status-dot"></span>
-          <span class="status-label" id="masterStatusText">CONNECTING</span>
-        </div>
-
-        <div class="vps-info-pill">
-          <span>VPS Uptime:</span>
-          <strong id="vpsUptimeText">0m</strong>
-        </div>
-
-        <button class="btn btn-secondary btn-sm" id="logoutBtn">
-          🚪 Logout
+        <button id="btnSettings" class="btn btn-secondary btn-nav">
+          <span class="btn-icon">⚙️</span> Config
         </button>
       </div>
     </header>
 
-    <!-- Main Content Container -->
-    <main class="main-content">
-
-      <!-- Action Banner -->
-      <section class="control-panel card">
-        <div class="control-header">
-          <div>
-            <h3>🎮 Remote Process Controls</h3>
-            <p class="desc">Manage headless Playwright browser instance and session execution</p>
-          </div>
-          <div class="quick-status-indicators">
-            <span id="headlessBadge" class="mini-pill">Headless: ON</span>
-            <span id="autoRunBadge" class="mini-pill">Auto-Run: ON</span>
-          </div>
-        </div>
-
-        <div class="control-btn-grid">
-          <button class="btn btn-success" id="startWorkerBtn">
-            ▶️ Start Worker
-          </button>
-          <button class="btn btn-danger" id="stopWorkerBtn">
-            ⏹️ Stop Worker
-          </button>
-          <button class="btn btn-warning" id="restartWorkerBtn">
-            🔄 Restart Worker
-          </button>
-          <button class="btn btn-primary" id="runAllBtn">
-            ⚡ Run All Cells (Ctrl+F9)
-          </button>
-          <button class="btn btn-secondary" id="reconnectBtn">
-            🔌 Force Reconnect
-          </button>
-          <button class="btn btn-info" id="viewScreenshotBtn">
-            📸 View Live Screen
-          </button>
-        </div>
-      </section>
-
-      <!-- Live Metrics Grid -->
-      <section class="metrics-grid">
-        <!-- Session Duration -->
-        <div class="metric-card card">
-          <div class="metric-title">Active Session Duration</div>
-          <div class="metric-value-large" id="sessionTimerText">00:00:00</div>
-          <div class="metric-sub" id="sessionStartSub">Session started: —</div>
-        </div>
-
-        <!-- Total Uptime -->
-        <div class="metric-card card">
-          <div class="metric-title">Total Active Runtime</div>
-          <div class="metric-value-large" id="totalRuntimeText">0m</div>
-          <div class="metric-sub">Across all reconnect stretches</div>
-        </div>
-
-        <!-- RAM Usage -->
-        <div class="metric-card card">
-          <div class="metric-title">
-            <span>RAM (Colab Cloud)</span>
-            <span id="ramDetailText" class="metric-pct">—</span>
-          </div>
-          <div class="progress-bar-bg">
-            <div class="progress-bar-fill" id="ramProgressFill" style="width: 0%;"></div>
-          </div>
-          <div class="metric-sub" id="ramSubText">Waiting for runtime metrics</div>
-        </div>
-
-        <!-- Disk Usage -->
-        <div class="metric-card card">
-          <div class="metric-title">
-            <span>Disk Storage</span>
-            <span id="diskDetailText" class="metric-pct">—</span>
-          </div>
-          <div class="progress-bar-bg">
-            <div class="progress-bar-fill" id="diskProgressFill" style="width: 0%;"></div>
-          </div>
-          <div class="metric-sub" id="diskSubText">Waiting for disk stats</div>
-        </div>
-      </section>
-
-      <!-- Split Area: Terminal Logs & Configuration -->
-      <div class="dashboard-split">
-
-        <!-- Console Logs Viewer -->
-        <section class="card logs-section">
-          <div class="section-header">
-            <div class="title-with-icon">
-              <span class="terminal-icon">📟</span>
-              <h3>Live Worker Logs</h3>
-            </div>
-            <div class="logs-actions">
-              <input type="text" id="logFilterInput" placeholder="Filter logs..." class="search-input" />
-              <button class="btn btn-icon" id="clearLogsBtn" title="Clear Logs">🗑️</button>
-              <button class="btn btn-icon" id="scrollToggleBtn" title="Auto-scroll Toggle">⬇️</button>
-            </div>
-          </div>
-
-          <div class="terminal-window" id="terminalLogs">
-            <div class="log-entry info">[System] Waiting for live events stream...</div>
-          </div>
-        </section>
-
-        <!-- Profile & Settings Panel -->
-        <section class="card settings-section">
-          <div class="section-header">
-            <div class="title-with-icon">
-              <span>⚙️</span>
-              <h3>Profile & Configuration</h3>
-            </div>
-            <button class="btn btn-secondary btn-sm" id="importJsonModalBtn">
-              📥 Import Chrome Profile JSON
+    <!-- WORKSPACE MODE & TARGET LINK CONTROL BAR -->
+    <section class="card config-bar-card">
+      <div class="config-bar-content">
+        <div class="mode-selector-group">
+          <span class="section-label">Select Workspace Mode</span>
+          <div class="segmented-control">
+            <button class="seg-btn active" id="btnModeCloudshell" data-mode="cloudshell">
+              <span class="seg-icon">☁️</span> Google Cloud Shell
             </button>
-            <button class="btn btn-secondary btn-sm" id="cookieImportBtn">
-              🍪 Google Session Cookies
+            <button class="seg-btn" id="btnModeColab" data-mode="colab">
+              <span class="seg-icon">🚀</span> Google Colab
             </button>
           </div>
+        </div>
 
-          <form id="configForm" class="settings-form">
-            <div class="input-group">
-              <label for="configNotebookUrl">Google Colab Notebook URL</label>
-              <input type="url" id="configNotebookUrl" placeholder="https://colab.research.google.com/drive/..." required />
-            </div>
-
-            <div class="form-row-2">
-              <div class="input-group">
-                <label for="configKeepalive">Keep-alive Interval (Sec)</label>
-                <input type="number" id="configKeepalive" min="10" max="600" value="60" />
-              </div>
-              <div class="input-group">
-                <label for="configRetry">Reconnect Delay (Sec)</label>
-                <input type="number" id="configRetry" min="5" max="300" value="10" />
-              </div>
-            </div>
-
-            <div class="toggles-list">
-              <label class="checkbox-label">
-                <input type="checkbox" id="configAutoRun" checked />
-                <span>⚡ Auto "Run All" on connect / reconnect</span>
-              </label>
-
-              <label class="checkbox-label">
-                <input type="checkbox" id="configHeadless" checked />
-                <span>🕶️ Run Headless (Recommended on VPS)</span>
-              </label>
-            </div>
-
-            <div class="form-actions">
-              <button type="submit" class="btn btn-primary" id="saveConfigBtn">
-                💾 Save Configuration
-              </button>
-            </div>
-          </form>
-
-          <hr class="divider" />
-
-          <!-- Change Admin Password -->
-          <div class="security-card">
-            <h4>🔐 Update Dashboard Password</h4>
-            <form id="passwordForm" class="password-form">
-              <div class="input-group">
-                <input type="password" id="newPasswordInput" placeholder="New Password (min 6 chars)" required />
-              </div>
-              <button type="submit" class="btn btn-secondary btn-sm" id="updatePasswordBtn">
-                Update Password
-              </button>
-            </form>
+        <div class="url-input-group">
+          <span class="section-label" id="urlLabel">Dynamic Cloud Shell Link</span>
+          <div class="input-with-action">
+            <input type="text" id="activeUrlInput" class="input-field" placeholder="https://shell.cloud.google.com/?show=terminal" value="https://shell.cloud.google.com/?show=terminal" autocomplete="off">
+            <button id="btnSaveUrl" class="btn btn-primary">
+              <span>Save Link</span>
+            </button>
           </div>
-        </section>
+        </div>
       </div>
+    </section>
 
+    <!-- DASHBOARD MAIN GRID -->
+    <main class="dashboard-grid">
+      <!-- 1. Session Overview Card -->
+      <section class="card status-card">
+        <div class="card-header">
+          <div class="header-title-group">
+            <span class="card-icon">⚡</span>
+            <div>
+              <h2>Session Overview</h2>
+              <p class="card-sub">Real-time runtime state and process telemetry</p>
+            </div>
+          </div>
+          <div class="header-tools">
+            <span class="badge badge-success" id="cookieStatusBadge">Profile: Ready ✓</span>
+            <span class="badge badge-info" id="headlessBadge">Headless: ON</span>
+          </div>
+        </div>
+
+        <div class="metrics-grid">
+          <div class="metric-box">
+            <div class="metric-top">
+              <span class="metric-label">Runtime State</span>
+              <span class="metric-tag">Engine</span>
+            </div>
+            <span class="metric-value" id="runtimeStateValue">IDLE</span>
+            <span class="metric-hint" id="runtimeReason">Waiting to start</span>
+          </div>
+
+          <div class="metric-box">
+            <div class="metric-top">
+              <span class="metric-label">Active Duration</span>
+              <span class="metric-tag">Live</span>
+            </div>
+            <span class="metric-value font-mono" id="sessionDurationValue">00:00:00</span>
+            <span class="metric-hint">Current Session Uptime</span>
+          </div>
+
+          <div class="metric-box" id="intervalMetricBox">
+            <div class="metric-top">
+              <span class="metric-label" id="intervalLabel">Next 10-Min Check</span>
+              <span class="metric-tag">Keeper</span>
+            </div>
+            <span class="metric-value font-mono" id="nextCheckValue">--:--</span>
+            <span class="metric-hint" id="intervalHint">Checks if session ended</span>
+          </div>
+
+          <div class="metric-box" id="commandMetricBox">
+            <div class="metric-top">
+              <span class="metric-label" id="commandMetricLabel">Startup Command</span>
+              <span class="metric-tag">Auto</span>
+            </div>
+            <span class="metric-value code-font font-mono" id="startupCmdValue">docker start omniroute</span>
+            <span class="metric-hint" id="commandMetricHint">Runs after 1 min wait</span>
+          </div>
+        </div>
+
+        <div class="control-actions">
+          <button id="btnStart" class="btn btn-success btn-lg">
+            <span>▶</span> Start Session
+          </button>
+          <button id="btnStop" class="btn btn-danger btn-lg" disabled>
+            <span>⏹</span> Stop Session
+          </button>
+          <button id="btnReconnect" class="btn btn-warning btn-lg">
+            <span>🔄</span> Force Reconnect
+          </button>
+        </div>
+      </section>
+
+      <!-- 2. Terminal Remote Execution Card -->
+      <section class="card command-card">
+        <div class="card-header">
+          <div class="header-title-group">
+            <span class="card-icon">💻</span>
+            <div>
+              <h2 id="commandCardTitle">Terminal Execution</h2>
+              <p class="card-sub" id="commandCardSub">Dispatch shell commands or notebook triggers to live container</p>
+            </div>
+          </div>
+        </div>
+        <div class="command-input-group">
+          <div class="terminal-prefix">&gt;_</div>
+          <input type="text" id="cmdInput" class="input-field command-input" placeholder="docker start omniroute" value="docker start omniroute" autocomplete="off">
+          <button id="btnSendCmd" class="btn btn-primary">
+            <span>⚡ Send</span>
+          </button>
+        </div>
+        <div class="quick-commands" id="quickCommandsContainer">
+          <span class="quick-label">Quick actions:</span>
+          <button class="chip" data-cmd="docker start omniroute">docker start omniroute</button>
+          <button class="chip" data-cmd="docker ps">docker ps</button>
+          <button class="chip" data-cmd="docker logs omniroute">docker logs omniroute</button>
+          <button class="chip" data-cmd="uptime">uptime</button>
+        </div>
+      </section>
+
+      <!-- 3. Live Screen Snapshot Card -->
+      <section class="card screenshot-card">
+        <div class="card-header">
+          <div class="header-title-group">
+            <span class="card-icon">🖥️</span>
+            <div>
+              <h2>Live Workspace Snapshot</h2>
+              <p class="card-sub">Real-time Playwright viewport render</p>
+            </div>
+          </div>
+          <div class="header-tools">
+            <button id="btnRefreshScreenshot" class="btn btn-sm btn-secondary">
+              <span>🔄</span> Refresh
+            </button>
+            <label class="toggle-label">
+              <input type="checkbox" id="autoRefreshScreenshot" checked>
+              <span class="toggle-custom"></span>
+              Auto (15s)
+            </label>
+          </div>
+        </div>
+        <div class="screenshot-wrapper" id="screenshotWrapper">
+          <img id="terminalScreenshot" src="" alt="Live View" class="screenshot-img" style="display:none;">
+          <div id="screenshotPlaceholder" class="screenshot-placeholder">
+            <div class="placeholder-icon">🖥️</div>
+            <p class="placeholder-text">No active viewport capture</p>
+            <span class="placeholder-sub">Click "Start Session" to spin up the browser instance</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- 4. Real-Time Keeper Logs Card -->
+      <section class="card logs-card">
+        <div class="card-header">
+          <div class="header-title-group">
+            <span class="card-icon">📟</span>
+            <div>
+              <h2>Real-Time Keeper Logs</h2>
+              <p class="card-sub">Event stream and telemetry feed</p>
+            </div>
+          </div>
+          <div class="header-tools">
+            <button id="btnClearLogs" class="btn btn-sm btn-secondary">
+              <span>🗑️</span> Clear
+            </button>
+            <label class="toggle-label">
+              <input type="checkbox" id="autoScrollLogs" checked>
+              <span class="toggle-custom"></span>
+              Auto-scroll
+            </label>
+          </div>
+        </div>
+        <div class="terminal-container">
+          <div class="terminal-bar">
+            <div class="terminal-dots">
+              <span class="dot dot-red"></span>
+              <span class="dot dot-yellow"></span>
+              <span class="dot dot-green"></span>
+            </div>
+            <span class="terminal-title">automation.log — live stream</span>
+          </div>
+          <div class="terminal-log-window" id="logContainer">
+            <div class="log-line log-info">[SYSTEM] Cloud Shell &amp; Colab Unified Automation Gateway initialized.</div>
+          </div>
+        </div>
+      </section>
     </main>
-  </div>
 
-  <!-- ==================== LIVE SCREENSHOT MODAL ==================== -->
-  <div id="screenshotModal" class="modal-overlay" style="display: none;">
-    <div class="modal-card modal-lg">
-      <div class="modal-header">
-        <h3>📸 Live Browser Viewport Preview</h3>
-        <div class="modal-actions">
-          <button class="btn btn-secondary btn-sm" id="refreshScreenshotBtn">🔄 Refresh Snapshot</button>
-          <button class="btn-close" id="closeScreenshotModalBtn">✕</button>
+    <!-- SETTINGS MODAL -->
+    <div class="modal" id="settingsModal">
+      <div class="modal-dialog">
+        <div class="modal-header">
+          <div class="modal-title-group">
+            <span class="modal-icon">⚙️</span>
+            <h3>Configuration &amp; Behavior</h3>
+          </div>
+          <button class="btn-close" id="btnCloseSettings" aria-label="Close">&times;</button>
         </div>
-      </div>
-      <div class="modal-body">
-        <div id="screenshotLoading" class="loader-box">
-          <div class="spinner"></div>
-          <p>Capturing snapshot from Playwright...</p>
+        <div class="modal-body">
+          <div class="form-group">
+            <label for="cfgCloudShellUrl">Default Cloud Shell URL</label>
+            <input type="text" id="cfgCloudShellUrl" class="input-field" value="https://shell.cloud.google.com/?show=terminal">
+          </div>
+          <div class="form-group">
+            <label for="cfgColabUrl">Default Colab Notebook URL</label>
+            <input type="text" id="cfgColabUrl" class="input-field" value="https://colab.research.google.com/">
+          </div>
+          <div class="form-group">
+            <label for="cfgStartupCmd">Cloud Shell Startup Command</label>
+            <input type="text" id="cfgStartupCmd" class="input-field" value="docker start omniroute">
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label for="cfgWaitAfterLoad">Cloud Shell Wait After Load (Sec)</label>
+              <input type="number" id="cfgWaitAfterLoad" class="input-field" value="60">
+              <small>Default: 60s (wait before typing startup command)</small>
+            </div>
+            <div class="form-group">
+              <label for="cfgCheckInterval">Cloud Shell Check Interval (Mins)</label>
+              <input type="number" id="cfgCheckInterval" class="input-field" value="10">
+              <small>Default: 10 mins (session status check)</small>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label for="cfgColabKeepalive">Colab Keep-Alive Interval (Sec)</label>
+              <input type="number" id="cfgColabKeepalive" class="input-field" value="60">
+            </div>
+            <div class="form-group checkbox-group" style="margin-top:24px;">
+              <label class="custom-checkbox">
+                <input type="checkbox" id="cfgColabAutoRun" checked>
+                <span class="checkbox-box"></span>
+                <span>Colab Auto Run All on Connect</span>
+              </label>
+            </div>
+          </div>
+          <div class="form-group checkbox-group">
+            <label class="custom-checkbox">
+              <input type="checkbox" id="cfgHeadless" checked>
+              <span class="checkbox-box"></span>
+              <span>Run Browser Headless (Recommended for 24/7 VPS)</span>
+            </label>
+          </div>
         </div>
-        <img id="screenshotImg" alt="Colab Live Screenshot" style="display: none;" />
-      </div>
-    </div>
-  </div>
-
-  <!-- ==================== IMPORT JSON PROFILE MODAL ==================== -->
-  <div id="importModal" class="modal-overlay" style="display: none;">
-    <div class="modal-card">
-      <div class="modal-header">
-        <h3>📥 Import Chrome Extension Profile JSON</h3>
-        <button class="btn-close" id="closeImportModalBtn">✕</button>
-      </div>
-      <div class="modal-body">
-        <p class="modal-desc">
-          Colab Pro Monitor Chrome extension se <b>"📄 Save JSON"</b> dabakar download ki gayi file ka content yahan paste karein:
-        </p>
-
-        <textarea id="importJsonTextarea" placeholder='Paste your exported JSON here: { "profile": { "proxyUrl": "...", "token": "..." } }' rows="8"></textarea>
-
         <div class="modal-footer">
-          <button type="button" class="btn btn-secondary" id="cancelImportBtn">Cancel</button>
-          <button type="button" class="btn btn-primary" id="confirmImportBtn">✅ Apply Profile Data</button>
+          <button class="btn btn-secondary" id="btnCancelSettings">Cancel</button>
+          <button class="btn btn-primary" id="btnSaveSettings">Save All Config</button>
         </div>
       </div>
     </div>
-  </div>
 
-  <!-- ==================== IMPORT GOOGLE SESSION COOKIES MODAL ==================== -->
-  <div id="cookieImportModal" class="modal-overlay" style="display: none;">
-    <div class="modal-card">
-      <div class="modal-header">
-        <h3>🍪 Import Google Session Cookies</h3>
-        <button class="btn-close" id="closeCookieImportBtn">✕</button>
-      </div>
-      <div class="modal-body">
-        <p class="modal-desc">
-          Chrome ki <b>Cookie-Editor</b> extension se <b>Export → as JSON</b> karke copied content yahan paste karein
-          (colab.research.google.com pe logged-in hokar). Yeh Google session cookies profile mein save ho jayengi —
-          worker/keeper ko login nahi maangna padega.
-        </p>
-
-        <textarea id="cookieJsonTextarea" placeholder='Paste Cookie-Editor JSON here: [{ "domain": ".google.com", "name": "SID", "value": "...", ... }]' rows="10"></textarea>
-
-        <div id="cookieImportResult" class="alert-box info" style="display: none;"></div>
-
+    <!-- COOKIES MODAL (ONE-TIME IMPORT, SAVED TO PROFILE) -->
+    <div class="modal" id="cookiesModal">
+      <div class="modal-dialog">
+        <div class="modal-header">
+          <div class="modal-title-group">
+            <span class="modal-icon">🍪</span>
+            <h3>Google Cookies &amp; Profile Setup</h3>
+          </div>
+          <button class="btn-close" id="btnCloseCookies" aria-label="Close">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="info-banner">
+            <span class="info-icon">💡</span>
+            <p class="modal-desc">
+              Cookies are <strong>saved permanently to disk &amp; Chrome profile</strong>. You only need to import them <strong>once</strong>. The session automatically stays logged in across restarts and reboots.
+            </p>
+          </div>
+          <div class="form-group">
+            <label for="cookiesInput">Cookie-Editor Exported JSON</label>
+            <textarea id="cookiesInput" class="input-textarea font-mono" placeholder='[{"name":"SID","value":"...","domain":".google.com"}]'></textarea>
+          </div>
+          <div id="cookiesStatusMsg" class="status-msg"></div>
+        </div>
         <div class="modal-footer">
-          <button type="button" class="btn btn-secondary" id="cancelCookieImportBtn">Cancel</button>
-          <button type="button" class="btn btn-primary" id="confirmCookieImportBtn">✅ Import Cookies</button>
+          <button class="btn btn-secondary" id="btnCancelCookies">Cancel</button>
+          <button class="btn btn-success" id="btnImportCookies">Save to Profile</button>
         </div>
       </div>
     </div>
   </div>
 
-  <!-- ==================== ORACLE VPS SETTINGS MODAL ==================== -->
-  <div id="vpsSettingsModal" class="modal-overlay" style="display: none;">
-    <div class="modal-card">
-      <div class="modal-header">
-        <h3>🌐 Oracle VPS Automation Backend Node</h3>
-        <button class="btn-close" id="closeVpsSettingsBtn">✕</button>
-      </div>
-      <div class="modal-body">
-        <p class="modal-desc">
-          Yeh UI & API Vercel pe host ho sakti hai jabki Playwright logic Oracle VPS pe chalega.
-          Apna Oracle VPS Public IP / Domain aur API Secret yahan configure karein:
-        </p>
-
-        <form id="vpsSettingsForm" class="settings-form">
-          <div class="input-group">
-            <label for="vpsUrlInput">Oracle VPS Backend URL</label>
-            <input type="url" id="vpsUrlInput" placeholder="http://123.45.67.89 or http://123.45.67.89:80" />
-            <small style="color:var(--text-muted); font-size: 0.8rem; margin-top: 4px; display: block;">
-              (Leave empty to use Vercel <code>VPS_URL</code> Environment Variable)
-            </small>
-          </div>
-
-          <div class="input-group">
-            <label for="vpsSecretInput">VPS API Secret (Optional)</label>
-            <input type="password" id="vpsSecretInput" placeholder="Enter API_SECRET if set on VPS" />
-          </div>
-
-          <div id="vpsTestResult" class="alert-box info" style="display: none;"></div>
-
-          <div class="modal-footer" style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px;">
-            <button type="button" class="btn btn-secondary" id="testVpsBtn">⚡ Test Connection</button>
-            <button type="submit" class="btn btn-primary" id="saveVpsSettingsBtn">💾 Save & Apply</button>
-          </div>
-        </form>
-      </div>
-    </div>
-  </div>
-
-  <!-- Toast Notification -->
-  <div id="toast" class="toast-notification" style="display: none;"></div>
-
-  <script src="client.js"></script>
+  <script src="/client.js"></script>
 </body>
 </html>
