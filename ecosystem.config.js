@@ -1,10 +1,10 @@
-// PM2 Config — Oracle VPS pe 24/7 Automation & Playwright Engine chalane ke liye
-// Use: pm2 start ecosystem.config.js
+// PM2 Config — Unified Google Cloud Shell & Colab 24/7 Automation
+// Usage: pm2 start ecosystem.config.js
 
 module.exports = {
   apps: [
     {
-      name: 'colab-pro-vps',
+      name: 'google-automation-manager',
       script: './server.js',
       cwd: __dirname,
       autorestart: true,
@@ -18,7 +18,7 @@ module.exports = {
       time: true,
       env: {
         NODE_ENV: 'production',
-        PORT: 80,
+        PORT: 8080,
         HEADLESS: 'true',
       },
     },

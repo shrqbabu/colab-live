@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "name": "colab-pro-manager",
+  "name": "cloudshell-colab-manager",
   "rewrites": [
     {
       "source": "/(.*)",

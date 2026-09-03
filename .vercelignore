@@ -1,12 +1,10 @@
-# Backend VPS automation files (Exclusively run on Oracle Cloud VPS via PM2)
-server.js
-worker.js
-colab_keeper.js
-colab-login.js
-import-cookies.js
-deploy-vps.sh
-ecosystem.config.js
-config.json
-profile/
+node_modules
+.env
+.env.*
+!.env.example
 *.log
-.git/
+playwright-state
+screenshots
+cookies*.json
+profile-data
+.git

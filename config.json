@@ -1,19 +1,17 @@
 {
-  "notebookUrl": "https://colab.research.google.com/drive/1rbcpyiaEneeLuqpczvYaJn3soEFR7LkQ",
-  "port": 80,
+  "mode": "cloudshell",
+  "cloudShellUrl": "https://shell.cloud.google.com/?show=terminal",
+  "colabUrl": "https://colab.research.google.com/",
+  "startupCommand": "docker start omniroute",
+  "waitAfterLoadSec": 60,
+  "checkIntervalMin": 10,
+  "colabKeepaliveSec": 60,
+  "colabAutoRun": true,
+  "port": 8080,
   "headless": true,
-  "keepaliveMs": 60000,
-  "retryConnectMs": 10000,
-  "waitAfterConnectMs": 6000,
-  "autoRunOnConnect": true,
   "autoStart": false,
   "auth": {
-    "email": "admin@colab.pro",
+    "email": "admin@cloudshell.pro",
     "password": "password123"
-  },
-  "profile": {
-    "proxyUrl": "",
-    "token": "",
-    "notebookId": ""
   }
 }

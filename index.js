@@ -1,11 +1,13 @@
 // ============================================================
 //  ⚡ Vercel Serverless All-in-One Gateway & Static Server
+//  Cloud Shell & Colab Unified Automation
 // ============================================================
 
 const fs = require('fs');
 const path = require('path');
 const http = require('http');
 const https = require('https');
+const crypto = require('crypto');
 const { URL } = require('url');
 
 const MIME_TYPES = {
@@ -107,6 +109,52 @@ async function getRequestBody(req) {
   });
 }
 
+// Import Unified Worker
+const UnifiedGoogleWorker = require('./worker');
+const CONFIG_PATH = path.join(__dirname, 'config.json');
+const worker = new UnifiedGoogleWorker(CONFIG_PATH);
+
+// In-Memory state
+const logBuffer = [];
+const MAX_LOGS = 350;
+const sseClients = new Set();
+
+worker.on('log', (entry) => {
+  logBuffer.push(entry);
+  if (logBuffer.length > MAX_LOGS) logBuffer.shift();
+  broadcastSSE('log', entry);
+});
+
+worker.on('status_change', (status) => {
+  broadcastSSE('status', status);
+});
+
+function broadcastSSE(type, data) {
+  const payload = `event: ${type}\ndata: ${JSON.stringify(data)}\n\n`;
+  for (const res of sseClients) {
+    try {
+      res.write(payload);
+    } catch (_) {
+      sseClients.delete(res);
+    }
+  }
+}
+
+function generateToken() {
+  return crypto.randomBytes(32).toString('hex');
+}
+
+async function parseJsonBody(req) {
+  const buffer = await getRequestBody(req);
+  try {
+    return buffer.length > 0 ? JSON.parse(buffer.toString('utf-8')) : {};
+  } catch (err) {
+    throw new Error('Invalid JSON');
+  }
+}
+
+const authTokens = new Map();
+
 module.exports = async function handler(req, res) {
   // Global CORS
   try {
@@ -149,17 +197,187 @@ module.exports = async function handler(req, res) {
 
   // ── 1. API ROUTES: /api/* ──
   if (pathname.startsWith('/api/') || pathname === '/api') {
-    const rawVpsUrl = process.env.VPS_URL || process.env.ORACLE_VPS_URL || req.headers['x-vps-url'];
-    const vpsUrl = parseVpsUrl(rawVpsUrl) || 'http://68.233.113.7'; // Built-in fallback to Oracle VPS IP
-
-    let apiPath = pathname.replace(/^\/api/, '');
+    const apiPath = pathname.replace(/^\/api/, '');
     if (!apiPath.startsWith('/')) apiPath = '/' + apiPath;
 
-    // Gateway Info Route
-    if (apiPath === '/vps-gateway-status' || apiPath === '/gateway-info') {
+    // ── Auth Endpoints ──
+    if (apiPath === '/login' && req.method === 'POST') {
+      try {
+        const body = await parseJsonBody(req);
+        const conf = worker.loadConfig();
+        const email = body.email || '';
+        const password = body.password || '';
+
+        if (email === (conf.auth?.email || 'admin@cloudshell.pro') &&
+            password === (conf.auth?.password || 'password123')) {
+          const token = generateToken();
+          authTokens.set(token, { email, created: Date.now() });
+          return sendResponse(res, 200, { ok: true, token });
+        }
+        return sendResponse(res, 401, { ok: false, error: 'Invalid credentials' });
+      } catch (e) {
+        return sendResponse(res, 400, { ok: false, error: e.message });
+      }
+    }
+
+    if (apiPath === '/logout' && req.method === 'POST') {
+      const token = req.headers['authorization']?.replace(/^Bearer\s+/i, '') || '';
+      authTokens.delete(token);
+      return sendResponse(res, 200, { ok: true });
+    }
+
+    if (apiPath === '/auth/check') {
+      const token = req.headers['authorization']?.replace(/^Bearer\s+/i, '') || '';
+      return sendResponse(res, 200, { ok: true, authenticated: authTokens.has(token) });
+    }
+
+    if (apiPath === '/auth/update' && req.method === 'POST') {
+      const token = req.headers['authorization']?.replace(/^Bearer\s+/i, '') || '';
+      if (!authTokens.has(token)) return sendResponse(res, 401, { ok: false, error: 'Unauthorized' });
+      try {
+        const body = await parseJsonBody(req);
+        worker.saveConfig({ auth: { password: body.newPassword } });
+        return sendResponse(res, 200, { ok: true });
+      } catch (e) {
+        return sendResponse(res, 400, { ok: false, error: e.message });
+      }
+    }
+
+    // ── Status & SSE ──
+    if (apiPath === '/status' && req.method === 'GET') {
+      return sendResponse(res, 200, { ok: true, ...worker.getStatus() });
+    }
+
+    if (apiPath === '/logs' && req.method === 'GET') {
+      return sendResponse(res, 200, { ok: true, logs: logBuffer });
+    }
+
+    if (apiPath === '/logs/clear' && req.method === 'POST') {
+      logBuffer.length = 0;
+      return sendResponse(res, 200, { ok: true });
+    }
+
+    // SSE Stream
+    if (apiPath === '/events' && req.method === 'GET') {
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+      });
+      res.write(`event: init\ndata: ${JSON.stringify({ status: worker.getStatus(), logs: logBuffer })}\n\n`);
+      sseClients.add(res);
+
+      req.on('close', () => {
+        sseClients.delete(res);
+      });
+      return;
+    }
+
+    // ── Worker Controls ──
+    if (apiPath === '/worker/start' && req.method === 'POST') {
+      const result = await worker.start();
+      return sendResponse(res, result.ok ? 200 : 500, result);
+    }
+
+    if (apiPath === '/worker/stop' && req.method === 'POST') {
+      const result = await worker.stop();
+      return sendResponse(res, 200, result);
+    }
+
+    if (apiPath === '/worker/restart' && req.method === 'POST') {
+      await worker.stop();
+      setTimeout(() => worker.start(), 1000);
+      return sendResponse(res, 200, { ok: true });
+    }
+
+    if (apiPath === '/worker/run-all' && req.method === 'POST') {
+      const result = await worker.triggerColabRunAll();
+      return sendResponse(res, result.ok ? 200 : 500, result);
+    }
+
+    if (apiPath === '/worker/reconnect' && req.method === 'POST') {
+      const result = await worker.forceReconnect();
+      return sendResponse(res, 200, result);
+    }
+
+    // ── Remote Command ──
+    if (apiPath === '/send-command' && req.method === 'POST') {
+      try {
+        const body = await parseJsonBody(req);
+        const result = await worker.sendTerminalCommand(body.command);
+        return sendResponse(res, result.ok ? 200 : 500, result);
+      } catch (e) {
+        return sendResponse(res, 400, { ok: false, error: e.message });
+      }
+    }
+
+    // ── Screenshot ──
+    if (apiPath === '/screenshot' && req.method === 'GET') {
+      const buffer = await worker.takeScreenshot();
+      if (buffer) {
+        res.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'no-cache' });
+        res.end(buffer);
+      } else {
+        sendResponse(res, 404, 'No screenshot available');
+      }
+      return;
+    }
+
+    // ── Config & Cookies ──
+    if (apiPath === '/config' && req.method === 'GET') {
+      const conf = worker.loadConfig();
+      return sendResponse(res, 200, { ok: true, config: conf });
+    }
+
+    if (apiPath === '/config' && req.method === 'POST') {
+      try {
+        const body = await parseJsonBody(req);
+        worker.saveConfig(body);
+        return sendResponse(res, 200, { ok: true, config: worker.config });
+      } catch (e) {
+        return sendResponse(res, 400, { ok: false, error: e.message });
+      }
+    }
+
+    if (apiPath === '/cookies/import' && req.method === 'POST') {
+      try {
+        const body = await parseJsonBody(req);
+        const result = await worker.importCookies(body);
+        return sendResponse(res, result.ok ? 200 : 400, result);
+      } catch (e) {
+        return sendResponse(res, 400, { ok: false, error: e.message });
+      }
+    }
+
+    if (apiPath === '/profile/import' && req.method === 'POST') {
+      try {
+        const body = await parseJsonBody(req);
+        const newConfig = { ...worker.config };
+        if (body.profile) newConfig.profile = body.profile;
+        worker.saveConfig(newConfig);
+        return sendResponse(res, 200, { ok: true });
+      } catch (e) {
+        return sendResponse(res, 400, { ok: false, error: e.message });
+      }
+    }
+
+    // ── Health Check (for VPS Gateway) ──
+    if (apiPath === '/health') {
       return sendResponse(res, 200, {
         ok: true,
-        service: 'vercel-all-in-one-gateway',
+        isRunning: worker.isRunning,
+        uptimeSec: Math.floor(process.uptime()),
+        mode: worker.config.mode,
+      });
+    }
+
+    // ── VPS Gateway Status ──
+    if (apiPath === '/vps-gateway-status' || apiPath === '/gateway-info') {
+      const rawVpsUrl = process.env.VPS_URL || process.env.ORACLE_VPS_URL || req.headers['x-vps-url'];
+      const vpsUrl = parseVpsUrl(rawVpsUrl);
+      return sendResponse(res, 200, {
+        ok: true,
+        service: 'vercel-unified-gateway',
         vpsConfigured: Boolean(vpsUrl),
         vpsUrl: vpsUrl ? vpsUrl.replace(/:\/\/[^@]*@/, '://') : null,
         environment: process.env.NODE_ENV || 'production',
@@ -167,122 +385,129 @@ module.exports = async function handler(req, res) {
       });
     }
 
-    const forwardQueryParams = new URLSearchParams(parsedReqUrl.searchParams);
-    forwardQueryParams.delete('__path');
-    const forwardQueryStr = forwardQueryParams.toString() ? '?' + forwardQueryParams.toString() : '';
-    const targetEndpoint = `${vpsUrl}/api${apiPath}${forwardQueryStr}`;
+    // ── Proxy to VPS if configured ──
+    const rawVpsUrl = process.env.VPS_URL || process.env.ORACLE_VPS_URL || req.headers['x-vps-url'];
+    const vpsUrl = parseVpsUrl(rawVpsUrl);
 
-    try {
-      const targetParsed = new URL(targetEndpoint);
-      const isHttps = targetParsed.protocol === 'https:';
-      const client = isHttps ? https : http;
+    if (vpsUrl) {
+      const forwardQueryParams = new URLSearchParams(parsedReqUrl.searchParams);
+      forwardQueryParams.delete('__path');
+      const forwardQueryStr = forwardQueryParams.toString() ? '?' + forwardQueryParams.toString() : '';
+      const targetEndpoint = `${vpsUrl}/api${apiPath}${forwardQueryStr}`;
 
-      const forwardHeaders = {};
-      for (const [key, val] of Object.entries(req.headers || {})) {
-        const lower = key.toLowerCase();
-        if (!HOP_BY_HOP_HEADERS.has(lower)) {
-          forwardHeaders[lower] = val;
-        }
-      }
+      try {
+        const targetParsed = new URL(targetEndpoint);
+        const isHttps = targetParsed.protocol === 'https:';
+        const client = isHttps ? https : http;
 
-      const apiSecret = process.env.VPS_API_SECRET || process.env.API_SECRET || req.headers['x-api-secret'] || req.headers['x-vps-key'];
-      if (apiSecret) {
-        forwardHeaders['x-api-secret'] = apiSecret;
-      }
-
-      let bodyBuffer = Buffer.alloc(0);
-      if (['POST', 'PUT', 'PATCH'].includes(req.method.toUpperCase())) {
-        bodyBuffer = await getRequestBody(req);
-        if (bodyBuffer.length > 0) {
-          forwardHeaders['content-length'] = bodyBuffer.length;
-          if (!forwardHeaders['content-type']) {
-            forwardHeaders['content-type'] = 'application/json';
-          }
-        } else {
-          delete forwardHeaders['content-length'];
-        }
-      }
-
-      const options = {
-        method: req.method,
-        hostname: targetParsed.hostname,
-        port: targetParsed.port || (isHttps ? 443 : 80),
-        path: targetParsed.pathname + targetParsed.search,
-        headers: forwardHeaders,
-        timeout: 25000,
-      };
-
-      const proxyReq = client.request(options, (proxyRes) => {
-        if (typeof res.status === 'function') {
-          res.status(proxyRes.statusCode || 200);
-        } else {
-          res.statusCode = proxyRes.statusCode || 200;
-        }
-
-        for (const [key, value] of Object.entries(proxyRes.headers)) {
+        const forwardHeaders = {};
+        for (const [key, val] of Object.entries(req.headers || {})) {
           const lower = key.toLowerCase();
-          if (!HOP_BY_HOP_HEADERS.has(lower) && !lower.startsWith('access-control-')) {
-            try { res.setHeader(key, value); } catch (_) {}
+          if (!HOP_BY_HOP_HEADERS.has(lower)) {
+            forwardHeaders[lower] = val;
           }
         }
 
-        proxyRes.pipe(res);
+        const apiSecret = process.env.VPS_API_SECRET || process.env.API_SECRET || req.headers['x-api-secret'] || req.headers['x-vps-key'];
+        if (apiSecret) {
+          forwardHeaders['x-api-secret'] = apiSecret;
+        }
 
-        proxyRes.on('error', (err) => {
+        let bodyBuffer = Buffer.alloc(0);
+        if (['POST', 'PUT', 'PATCH'].includes(req.method.toUpperCase())) {
+          bodyBuffer = await getRequestBody(req);
+          if (bodyBuffer.length > 0) {
+            forwardHeaders['content-length'] = bodyBuffer.length;
+            if (!forwardHeaders['content-type']) {
+              forwardHeaders['content-type'] = 'application/json';
+            }
+          } else {
+            delete forwardHeaders['content-length'];
+          }
+        }
+
+        const options = {
+          method: req.method,
+          hostname: targetParsed.hostname,
+          port: targetParsed.port || (isHttps ? 443 : 80),
+          path: targetParsed.pathname + targetParsed.search,
+          headers: forwardHeaders,
+          timeout: 25000,
+        };
+
+        const proxyReq = client.request(options, (proxyRes) => {
+          if (typeof res.status === 'function') {
+            res.status(proxyRes.statusCode || 200);
+          } else {
+            res.statusCode = proxyRes.statusCode || 200;
+          }
+
+          for (const [key, value] of Object.entries(proxyRes.headers)) {
+            const lower = key.toLowerCase();
+            if (!HOP_BY_HOP_HEADERS.has(lower) && !lower.startsWith('access-control-')) {
+              try { res.setHeader(key, value); } catch (_) {}
+            }
+          }
+
+          proxyRes.pipe(res);
+
+          proxyRes.on('error', (err) => {
+            if (!res.headersSent) {
+              sendResponse(res, 502, { ok: false, error: 'Proxy stream error: ' + err.message });
+            } else {
+              try { res.end(); } catch (_) {}
+            }
+          });
+        });
+
+        req.on('close', () => {
+          if (!proxyReq.destroyed) proxyReq.destroy();
+        });
+
+        proxyReq.on('error', (err) => {
           if (!res.headersSent) {
-            sendResponse(res, 502, { ok: false, error: 'Proxy stream error: ' + err.message });
+            sendResponse(res, 502, {
+              ok: false,
+              error: `Failed to reach VPS (${vpsUrl}): ${err.message}`,
+              code: 'VPS_UNREACHABLE',
+            });
           } else {
             try { res.end(); } catch (_) {}
           }
         });
-      });
 
-      req.on('close', () => {
-        if (!proxyReq.destroyed) proxyReq.destroy();
-      });
+        proxyReq.on('timeout', () => {
+          proxyReq.destroy();
+          if (!res.headersSent) {
+            sendResponse(res, 504, {
+              ok: false,
+              error: `VPS at ${vpsUrl} timed out after 25s`,
+              code: 'VPS_TIMEOUT'
+            });
+          } else {
+            try { res.end(); } catch (_) {}
+          }
+        });
 
-      proxyReq.on('error', (err) => {
-        if (!res.headersSent) {
-          sendResponse(res, 502, {
-            ok: false,
-            error: `Failed to reach Oracle VPS (${vpsUrl}): ${err.message}`,
-            code: 'VPS_UNREACHABLE',
-            hint: 'Ensure your Oracle Cloud VPS security list allows ingress on port 80 and PM2 is running.'
-          });
-        } else {
-          try { res.end(); } catch (_) {}
+        if (bodyBuffer.length > 0) {
+          proxyReq.write(bodyBuffer);
         }
-      });
+        proxyReq.end();
 
-      proxyReq.on('timeout', () => {
-        proxyReq.destroy();
-        if (!res.headersSent) {
-          sendResponse(res, 504, {
-            ok: false,
-            error: `Oracle VPS at ${vpsUrl} timed out after 25s`,
-            code: 'VPS_TIMEOUT'
-          });
-        } else {
-          try { res.end(); } catch (_) {}
-        }
-      });
-
-      if (bodyBuffer.length > 0) {
-        proxyReq.write(bodyBuffer);
+      } catch (err) {
+        return sendResponse(res, 500, {
+          ok: false,
+          error: 'Vercel API Gateway Error: ' + err.message
+        });
       }
-      proxyReq.end();
-
-    } catch (err) {
-      return sendResponse(res, 500, {
-        ok: false,
-        error: 'Vercel API Gateway Error: ' + err.message
-      });
+      return;
     }
-    return;
+
+    return sendResponse(res, 404, { ok: false, error: 'API endpoint not found' });
   }
 
-  // ── 2. STATIC FILES: index.html, client.js, style.css ──
-  let requestedFile = (pathname === '/' || pathname === '/index.html' || pathname === '/index.js') ? 'index.html' : pathname.replace(/^\/+/, '');
+  // ── 2. STATIC FILES ──
+  let requestedFile = (pathname === '/' || pathname === '/index.html') ? 'index.html' : pathname.replace(/^\/+/, '');
   let filePath = path.join(__dirname, requestedFile);
 
   if (!fs.existsSync(filePath)) {
@@ -291,9 +516,6 @@ module.exports = async function handler(req, res) {
 
   if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
     filePath = path.join(__dirname, 'index.html');
-    if (!fs.existsSync(filePath)) {
-      filePath = path.join(__dirname, 'public', 'index.html');
-    }
   }
 
   try {

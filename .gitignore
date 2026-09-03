@@ -1,29 +1,9 @@
-# Dependencies
 node_modules/
-
-# Browser profile — contains Google session cookies (never commit)
 profile/
-
-# Logs
 *.log
 pm2_out.log
 pm2_err.log
-deploy-vps.sh
-ecosystem.config.js
-colob-login.js
-colab_keeper.js
-worker.js
-server.js
-replit.nix
-import-cookies.js
-
-
-
-# Secrets / runtime config overrides
+cookies.json
 .env
-.replit
-.env.*
-
-# OS
 .DS_Store
 Thumbs.db

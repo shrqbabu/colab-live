@@ -1,136 +1,65 @@
-# ⚡ Colab Pro Manager (Oracle VPS Automation Engine + Vercel Web UI & Worker API)
+# 🌐 Google Cloud Shell & Colab 24/7 Automation Manager
 
-Google Colab ko **24/7 alive rakhne**, auto-reconnect karne, auto "Run All" (Ctrl+F9) chalane, aur **Vercel** se hosted modern Web Dashboard + Worker API ke through remote control karne ka complete hybrid system.
-
----
-
-## 🏗️ Architecture Overview
-
-Is system ko 2 layers me decouple kiya gaya hai:
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    ☁️ VERCEL (Frontend & API)               │
-│                                                             │
-│   [ Modern Web UI Dashboard ]   [ Worker API Gateway ]      │
-│   (HTML/CSS/JS on Vercel CDN)   (/api/* Serverless Proxy)   │
-└──────────────────────────────┬──────────────────────────────┘
-                               │ Secure HTTP / HTTPS / SSE
-                               ▼
-┌─────────────────────────────────────────────────────────────┐
-│              🏢 ORACLE CLOUD VPS (Automation Backend)       │
-│                                                             │
-│   [ Playwright Chromium ] ──> [ Google Colab Session ]      │
-│   [ Keep-Alive & Reconnect ]                                │
-│   [ VPS Node API Server (Port 3000) (PM2 Daemon) ]          │
-└─────────────────────────────────────────────────────────────┘
-```
-
-1. **🏢 Oracle Cloud VPS (Automation Engine)**:
-   - Headless Playwright Chromium browser jo Google Colab session ko 24/7 continuously active rakhta hai.
-   - Profile / Google Session Cookies, auto "Run All", keepalive clicks, DOM monitoring, aur live viewport screenshot generation.
-   - PM2 daemon ke under port 3000 par fast, secure REST/SSE API provide karta hai.
-
-2. **☁️ Vercel (Worker API & Web Dashboard)**:
-   - Lightning-fast global CDN pe hosted modern Glassmorphism Dashboard UI.
-   - Vercel Serverless Gateway (`/api/*`) jo secure tareeqe se Oracle VPS backend ko bridge karta hai.
-   - UI me built-in **"🌐 VPS Node"** connection switcher aur live latency/status monitoring.
+Playwright-based automation system to keep **Google Cloud Shell** and **Google Colab** running 24/7 with persistent profiles, dynamic links, and real-time dashboard controls.
 
 ---
 
-## 🚀 Part 1: Oracle VPS Setup (Backend Logic)
+## ✨ Features
 
-### Step 1: VPS me code clone ya upload karein
+1. **Dual Workspace Support (Colab & Cloud Shell)**:
+   - **Cloud Shell Mode**: Opens dynamic Cloud Shell link, waits 1 minute (60s), sends `docker start omniroute`, remains in passive mode with **ZERO clicks** during active session, checks every 10 minutes, and auto-reconnects on disconnection.
+   - **Colab Mode**: Opens dynamic Colab notebook link, dismisses Google Drive / modal dialogs, clicks connect, runs all cells (`Ctrl+F9`), extracts RAM & Disk metrics, and sends keep-alive signals to prevent idle timeouts.
+
+2. **Persistent Profile & Single-Time Cookies**:
+   - Enter your Google cookies **only once**.
+   - Cookies and browser context are permanently saved to `profile/` and `cookies_saved.json`.
+   - Even when you stop the browser or restart the VPS, it **automatically continues using your saved profile** without prompting again.
+
+3. **Dynamic Links**:
+   - Easily change and save the target URL directly from the Web Dashboard.
+
+4. **Web Dashboard & REST API**:
+   - Switch between **Google Cloud Shell** and **Google Colab** with one click.
+   - Live SSE log streaming, real-time screenshots, and terminal command sender.
+
+---
+
+## 🚀 Quick Setup
+
+### 1. Install Dependencies
 ```bash
-git clone <YOUR_REPO_URL> colab-playwright
-cd colab-playwright
+cd cloudshell-playwright
+npm install
+npx playwright install chromium
 ```
 
-### Step 2: 1-Command Automated VPS Setup chalayein
-Humne Oracle VPS ke liye auto-installer script banayi hai:
+### 2. Import Cookies (Only Once!)
+1. Open Chrome and log into your Google account on [Google Cloud Shell](https://shell.cloud.google.com/) or [Google Colab](https://colab.research.google.com/).
+2. Use the **Cookie-Editor** Chrome extension ➔ Click **Export** ➔ **Export as JSON**.
+3. Save to `cookies.json` and run:
 ```bash
-chmod +x deploy-vps.sh
-./deploy-vps.sh
+node import-cookies.js cookies.json
 ```
-*Yeh script Node.js 20, PM2, Playwright Chromium dependencies, aur firewall port 3000 khud configure kar degi.*
+*(You can also paste the JSON directly into the "Cookies & Profile" button on the Web Dashboard!)*
 
-### Step 3: Check VPS Server Status
+---
+
+## 🎯 Running the Manager
+
+### Web Dashboard & Server (Recommended):
 ```bash
-# Check PM2 processes
-pm2 status
-
-# View live logs
-pm2 logs colab-pro-vps
-
-# Check Health endpoint
-curl http://localhost:3000/api/health
+npm start
 ```
+Open **`http://localhost:8080`** in your browser.
 
-> [!NOTE]
-> **Oracle Cloud Ingress Security List:**
-> Make sure Oracle Cloud Console me apne VCN Security List me **Port 3000 (TCP)** Ingress Rule add karein taaki Vercel aapke VPS ko connect kar sake.
-
----
-
-## 🌐 Part 2: Vercel Setup (Worker API & Web UI)
-
-### Option A: Vercel CLI se Deploy karein
+### Standalone CLI Keeper:
 ```bash
-# Vercel CLI install karein (agar nahi hai)
-npm install -g vercel
-
-# Deploy command chalayein
-vercel
+npm run keeper
 ```
 
-### Option B: GitHub Repo se Vercel Dashboard pe Deploy karein
-1. Apne repo ko GitHub pe push karein.
-2. [Vercel Dashboard](https://vercel.com/new) par jaakar repo import karein.
-3. **Environment Variables** section me yeh daalein:
-   - `VPS_URL`: `http://YOUR_ORACLE_VPS_PUBLIC_IP:3000` (e.g. `http://140.238.10.55:3000`)
-   - `VPS_API_SECRET` *(Optional)*: Aapka custom secret token.
-4. **Deploy** button click karein.
-
----
-
-## 🎮 Part 3: Dashboard se Control Karna
-
-1. Apne Vercel link (`https://your-app.vercel.app`) ko kisi bhi mobile ya computer browser me kholein.
-2. **Login Credentials:**
-   - **Email:** `admin@colab.pro`
-   - **Password:** `password123` *(Settings me jaakar change kar sakte hain)*
-3. Top Navbar me **"🌐 VPS Node"** indicator check karein. Agar green `Oracle VPS: Online` dikhe, toh Vercel aapke Oracle VPS se connected hai!
-4. **Controls:**
-   - `▶️ Start Worker` / `⏹️ Stop Worker` / `🔄 Restart Worker`
-   - `⚡ Run All Cells (Ctrl+F9)` manually on demand
-   - `📸 View Live Screen` (Playwright browser ka live snapshot dekhein)
-   - `🍪 Google Session Cookies` (Cookie-Editor extension se JSON paste karein bina password Google login ke liye)
-
----
-
-## 📁 File Structure
-
+### 24/7 Background Service (VPS / Server):
+```bash
+npm run vps
+# or
+pm2 start ecosystem.config.js
 ```
-colab-playwright/
-├── api/                    # ☁️ Vercel Serverless Worker API
-│   ├── [...path].js        # Intelligent proxy gateway to Oracle VPS
-│   └── index.js            # Root health handler
-├── public/                 # 🌐 Web UI Dashboard (Hosted on Vercel)
-│   ├── index.html          # Dashboard HTML + VPS settings modal
-│   ├── style.css           # Modern Glassmorphism dark theme
-│   └── app.js              # Client application & live VPS health monitor
-├── worker.js               # 🤖 Playwright Automation Logic (Runs on Oracle VPS)
-├── colab_keeper.js         # Standalone Playwright keeper script
-├── server.js               # 🏢 Oracle VPS Node.js API Server
-├── deploy-vps.sh           # 🚀 Automated Oracle VPS Setup & dependency script
-├── ecosystem.config.js     # PM2 configuration for 24/7 daemon on VPS
-├── vercel.json             # Vercel routing & serverless configuration
-├── config.json             # Worker settings & parameters
-└── .env.example            # Environment variables template
-```
-
----
-
-## 🔐 Security Best Practices
-- VPS backend ko secure karne ke liye `.env` me `API_SECRET` set karein aur Vercel me `VPS_API_SECRET` same value daalein.
-- Dashboard password ko pehle login ke baad Settings se zaroor badal lein.
