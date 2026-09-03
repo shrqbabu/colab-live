@@ -32,6 +32,9 @@
           <span class="status-dot status-idle"></span>
           <span class="status-text" id="globalStatusText">IDLE</span>
         </div>
+        <button id="btnVpsSettings" class="btn btn-secondary btn-nav" title="Configure Oracle / Cloud VPS Node">
+          <span class="btn-icon">🌐</span> VPS Node
+        </button>
         <button id="btnCookiesModal" class="btn btn-secondary btn-nav">
           <span class="btn-icon">🍪</span> Cookies & Profile
         </button>
@@ -231,6 +234,41 @@
         </div>
       </section>
     </main>
+
+    <!-- VPS SETTINGS MODAL -->
+    <div class="modal" id="vpsModal">
+      <div class="modal-dialog">
+        <div class="modal-header">
+          <div class="modal-title-group">
+            <span class="modal-icon">🌐</span>
+            <h3>Oracle / Cloud VPS Node (Port 80)</h3>
+          </div>
+          <button class="btn-close" id="btnCloseVps" aria-label="Close">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="info-banner">
+            <span class="info-icon">💡</span>
+            <p class="modal-desc">
+              Agar aapka backend Playwright instance <strong>Oracle VPS ya Cloud Server (Port 80)</strong> par chal raha hai, toh uska public IP/URL yahan dalein:
+            </p>
+          </div>
+          <div class="form-group">
+            <label for="vpsUrlInput">VPS Backend URL (Port 80 / 8080)</label>
+            <input type="text" id="vpsUrlInput" class="input-field font-mono" placeholder="http://123.45.67.89 or http://your-vps.com">
+            <small>Direct IP or domain without trailing slash (e.g. http://123.45.67.89)</small>
+          </div>
+          <div class="form-group">
+            <label for="vpsSecretInput">API Secret Key (Optional)</label>
+            <input type="password" id="vpsSecretInput" class="input-field font-mono" placeholder="Optional VPS security secret">
+          </div>
+          <div id="vpsStatusMsg" class="status-msg"></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" id="btnCancelVps">Cancel</button>
+          <button class="btn btn-primary" id="btnSaveVps">Save &amp; Connect</button>
+        </div>
+      </div>
+    </div>
 
     <!-- SETTINGS MODAL -->
     <div class="modal" id="settingsModal">

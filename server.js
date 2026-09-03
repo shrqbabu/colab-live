@@ -246,7 +246,7 @@ const server = http.createServer(async (req, res) => {
 });
 
 const config = worker.loadConfig();
-const PORT = parseInt(process.env.PORT || config.port || '8080', 10);
+const PORT = parseInt(process.env.PORT || config.port || '80', 10);
 
 server.listen(PORT, '0.0.0.0', () => {
   console.log('========================================================');

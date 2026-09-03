@@ -870,7 +870,12 @@ class UnifiedGoogleWorker extends EventEmitter {
       }
     }
 
-    // 3. If browser is not running, save into persistent profile folder directly
+    // 3. If running in Serverless (Vercel / Lambda) environment, return immediately
+    if (process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME) {
+      return { ok: true, count: pwCookies.length, appliedTo: 'disk-backup' };
+    }
+
+    // 4. If browser is not running on VPS, save into persistent profile folder directly
     try {
       const isLinux = process.platform === 'linux';
       const execPath = this._detectExecutablePath();

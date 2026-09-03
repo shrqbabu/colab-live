@@ -12,6 +12,10 @@
   let currentMode = 'cloudshell';
   let appConfig = {};
 
+  // VPS Connection Config
+  let customVpsUrl = (localStorage.getItem('google_vps_url') || localStorage.getItem('colab_vps_url') || '').trim();
+  let customVpsSecret = (localStorage.getItem('google_vps_secret') || '').trim();
+
   // DOM Elements
   const modeLogo = document.getElementById('modeLogo');
   const activeModeBadge = document.getElementById('activeModeBadge');
@@ -55,7 +59,17 @@
   const btnClearLogs = document.getElementById('btnClearLogs');
   const autoScrollLogs = document.getElementById('autoScrollLogs');
 
-  // Modals
+  // VPS Modal
+  const vpsModal = document.getElementById('vpsModal');
+  const btnVpsSettings = document.getElementById('btnVpsSettings');
+  const btnCloseVps = document.getElementById('btnCloseVps');
+  const btnCancelVps = document.getElementById('btnCancelVps');
+  const btnSaveVps = document.getElementById('btnSaveVps');
+  const vpsUrlInput = document.getElementById('vpsUrlInput');
+  const vpsSecretInput = document.getElementById('vpsSecretInput');
+  const vpsStatusMsg = document.getElementById('vpsStatusMsg');
+
+  // Settings Modal
   const settingsModal = document.getElementById('settingsModal');
   const btnSettings = document.getElementById('btnSettings');
   const btnCloseSettings = document.getElementById('btnCloseSettings');
@@ -71,6 +85,7 @@
   const cfgColabAutoRun = document.getElementById('cfgColabAutoRun');
   const cfgHeadless = document.getElementById('cfgHeadless');
 
+  // Cookies Modal
   const cookiesModal = document.getElementById('cookiesModal');
   const btnCookiesModal = document.getElementById('btnCookiesModal');
   const btnCloseCookies = document.getElementById('btnCloseCookies');
@@ -78,6 +93,32 @@
   const btnImportCookies = document.getElementById('btnImportCookies');
   const cookiesInput = document.getElementById('cookiesInput');
   const cookiesStatusMsg = document.getElementById('cookiesStatusMsg');
+
+  // ── Unified API Fetch Wrapper with VPS Header Bridge ──
+  async function apiFetch(path, opts = {}) {
+    const headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
+    if (customVpsUrl && customVpsUrl.length > 7 && !/^https?:\/*$/i.test(customVpsUrl)) {
+      headers['X-VPS-URL'] = customVpsUrl;
+    }
+    if (customVpsSecret) {
+      headers['X-API-Secret'] = customVpsSecret;
+    }
+    const res = await fetch(path, { ...opts, headers });
+    return res;
+  }
+
+  async function apiJson(path, opts = {}) {
+    const res = await apiFetch(path, opts);
+    const text = await res.text();
+    try {
+      return JSON.parse(text);
+    } catch (_) {
+      if (!res.ok) {
+        throw new Error(`Server returned HTTP ${res.status}: ${text.substring(0, 100)}`);
+      }
+      throw new Error('Server returned non-JSON response: ' + text.substring(0, 80));
+    }
+  }
 
   // ── Format Duration ──
   function formatDuration(sec) {
@@ -133,7 +174,7 @@
       cmdInput.value = 'Run All Cells (Ctrl+F9)';
 
       quickCommandsContainer.innerHTML = `
-        <span>Quick actions:</span>
+        <span class="quick-label">Quick actions:</span>
         <button class="chip" data-cmd="Run All Cells (Ctrl+F9)">▶ Run All (Ctrl+F9)</button>
         <button class="chip" data-cmd="Reconnect Runtime">🔄 Reconnect</button>
       `;
@@ -157,7 +198,7 @@
       cmdInput.value = appConfig.startupCommand || 'docker start omniroute';
 
       quickCommandsContainer.innerHTML = `
-        <span>Quick actions:</span>
+        <span class="quick-label">Quick actions:</span>
         <button class="chip" data-cmd="docker start omniroute">docker start omniroute</button>
         <button class="chip" data-cmd="docker ps">docker ps</button>
         <button class="chip" data-cmd="docker logs omniroute">docker logs omniroute</button>
@@ -213,7 +254,7 @@
     }
 
     if (status.cookiesSaved !== undefined) {
-      cookieStatusBadge.textContent = status.cookiesSaved ? 'Profile: Saved ✓' : 'Profile: No Cookies';
+      cookieStatusBadge.textContent = status.cookiesSaved ? 'Profile: Ready ✓' : 'Profile: No Cookies';
       cookieStatusBadge.style.color = status.cookiesSaved ? '#22c55e' : '#f59e0b';
     }
 
@@ -249,7 +290,7 @@
   // ── Screenshot Fetcher ──
   async function fetchScreenshot() {
     try {
-      const res = await fetch('/api/screenshot?t=' + Date.now());
+      const res = await apiFetch('/api/screenshot?t=' + Date.now());
       if (res.ok) {
         const blob = await res.blob();
         const url = URL.createObjectURL(blob);
@@ -305,8 +346,7 @@
     btnStart.disabled = true;
     appendLog({ level: 'info', msg: `Starting ${currentMode.toUpperCase()} worker...` });
     try {
-      const res = await fetch('/api/start', { method: 'POST' });
-      const data = await res.json();
+      const data = await apiJson('/api/start', { method: 'POST' });
       if (!data.ok) alert('Start failed: ' + (data.message || data.error));
     } catch (e) {
       alert('Start request error: ' + e.message);
@@ -317,7 +357,7 @@
     btnStop.disabled = true;
     appendLog({ level: 'info', msg: 'Stopping worker (Profile preserved)...' });
     try {
-      await fetch('/api/stop', { method: 'POST' });
+      await apiJson('/api/stop', { method: 'POST' });
     } catch (e) {
       alert('Stop error: ' + e.message);
     }
@@ -327,7 +367,7 @@
     btnReconnect.disabled = true;
     appendLog({ level: 'warn', msg: 'Manual force reconnect triggered...' });
     try {
-      await fetch('/api/reconnect', { method: 'POST' });
+      await apiJson('/api/reconnect', { method: 'POST' });
     } catch (e) {
       alert('Reconnect error: ' + e.message);
     } finally {
@@ -340,12 +380,10 @@
     if (!cmd || !cmd.trim()) return;
     appendLog({ level: 'info', msg: `Executing command: ${cmd}...` });
     try {
-      const res = await fetch('/api/send-command', {
+      const data = await apiJson('/api/send-command', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ command: cmd.trim() }),
       });
-      const data = await res.json();
       if (!data.ok) {
         alert('Command error: ' + (data.message || data.error));
       }
@@ -366,9 +404,50 @@
     logContainer.innerHTML = '';
   });
 
+  // ── VPS Settings Modal ──
+  if (btnVpsSettings) {
+    btnVpsSettings.addEventListener('click', () => {
+      vpsUrlInput.value = customVpsUrl || '';
+      vpsSecretInput.value = customVpsSecret || '';
+      vpsStatusMsg.className = 'status-msg';
+      vpsStatusMsg.textContent = '';
+      vpsModal.classList.add('show');
+    });
+  }
+
+  const closeVps = () => { if (vpsModal) vpsModal.classList.remove('show'); };
+  if (btnCloseVps) btnCloseVps.addEventListener('click', closeVps);
+  if (btnCancelVps) btnCancelVps.addEventListener('click', closeVps);
+
+  if (btnSaveVps) {
+    btnSaveVps.addEventListener('click', async () => {
+      const inputVal = vpsUrlInput.value.trim().replace(/\/+$/, '');
+      const secretVal = vpsSecretInput.value.trim();
+
+      if (inputVal && !/^https?:\/\//i.test(inputVal)) {
+        customVpsUrl = 'http://' + inputVal;
+      } else {
+        customVpsUrl = inputVal;
+      }
+      customVpsSecret = secretVal;
+
+      localStorage.setItem('google_vps_url', customVpsUrl);
+      localStorage.setItem('colab_vps_url', customVpsUrl);
+      localStorage.setItem('google_vps_secret', customVpsSecret);
+
+      vpsStatusMsg.className = 'status-msg success';
+      vpsStatusMsg.textContent = customVpsUrl ? `✓ VPS configured: ${customVpsUrl}` : '✓ Set to local/serverless mode';
+
+      setTimeout(() => {
+        closeVps();
+        loadInitialData();
+      }, 1200);
+    });
+  }
+
   // ── Cookies Modal (Save once, profile persists) ──
   btnCookiesModal.addEventListener('click', () => {
-    cookiesInput.value = '';
+    cookiesInput.value = localStorage.getItem('saved_google_cookies') || '';
     cookiesStatusMsg.className = 'status-msg';
     cookiesStatusMsg.textContent = '';
     cookiesModal.classList.add('show');
@@ -404,30 +483,21 @@
     cookiesStatusMsg.textContent = 'Saving cookies permanently to profile & disk backup...';
 
     try {
-      let res = await fetch('/api/cookies', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(parsed),
-      });
-
-      // If /api/cookies failed with 404, try /api/cookies/import
-      if (res.status === 404) {
-        res = await fetch('/api/cookies/import', {
+      let data = null;
+      try {
+        data = await apiJson('/api/cookies', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(parsed),
+        });
+      } catch (err1) {
+        // Retry with /api/cookies/import
+        data = await apiJson('/api/cookies/import', {
+          method: 'POST',
           body: JSON.stringify(parsed),
         });
       }
 
-      const text = await res.text();
-      let data;
-      try {
-        data = JSON.parse(text);
-      } catch (_) {
-        throw new Error(res.ok ? 'Server returned non-JSON response' : `Server error (${res.status})`);
-      }
-
-      if (data.ok) {
+      if (data && data.ok) {
         cookiesStatusMsg.className = 'status-msg success';
         cookiesStatusMsg.textContent = `✓ Successfully saved ${data.count || parsed.length || 0} cookies! Session will persist across all restarts.`;
         cookieStatusBadge.textContent = 'Profile: Ready ✓';
@@ -435,7 +505,7 @@
         setTimeout(closeCookies, 2000);
       } else {
         cookiesStatusMsg.className = 'status-msg error';
-        cookiesStatusMsg.textContent = 'Error: ' + (data.error || data.message || 'Failed to save');
+        cookiesStatusMsg.textContent = 'Error: ' + (data ? (data.error || data.message) : 'Failed to save');
       }
     } catch (e) {
       cookiesStatusMsg.className = 'status-msg error';
@@ -448,9 +518,8 @@
   // ── Settings Modal ──
   btnSettings.addEventListener('click', async () => {
     try {
-      const res = await fetch('/api/config');
-      const data = await res.json();
-      if (data.ok && data.config) {
+      const data = await apiJson('/api/config');
+      if (data && data.ok && data.config) {
         appConfig = data.config;
         cfgCloudShellUrl.value = appConfig.cloudShellUrl || 'https://shell.cloud.google.com/?show=terminal';
         cfgColabUrl.value = appConfig.colabUrl || 'https://colab.research.google.com/';
@@ -471,13 +540,11 @@
 
   async function saveConfigToServer(payload) {
     try {
-      const res = await fetch('/api/config', {
+      const data = await apiJson('/api/config', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
-      const data = await res.json();
-      if (data.ok && data.config) {
+      if (data && data.ok && data.config) {
         appConfig = data.config;
       }
       return data;
@@ -499,12 +566,12 @@
     };
 
     const res = await saveConfigToServer(payload);
-    if (res.ok) {
+    if (res && res.ok) {
       setModeUI(currentMode);
       closeSettings();
       appendLog({ level: 'info', msg: 'Advanced configuration saved.' });
     } else {
-      alert('Save failed: ' + (res.error || res.message));
+      alert('Save failed: ' + ((res && res.error) || (res && res.message) || 'Unknown error'));
     }
   });
 
@@ -548,22 +615,26 @@
   }
 
   // ── Initial Load ──
-  fetch('/api/config')
-    .then((r) => r.json())
-    .then((data) => {
-      if (data.ok && data.config) {
-        appConfig = data.config;
-        setModeUI(appConfig.mode || 'cloudshell');
-      }
-    })
-    .catch(() => {});
+  function loadInitialData() {
+    apiJson('/api/config')
+      .then((data) => {
+        if (data && data.ok && data.config) {
+          appConfig = data.config;
+          setModeUI(appConfig.mode || 'cloudshell');
+        }
+      })
+      .catch(() => {});
 
-  fetch('/api/status')
-    .then((r) => r.json())
-    .then((data) => {
-      if (data.ok) updateStatusUI(data);
-    })
-    .catch(() => {});
+    apiJson('/api/status')
+      .then((data) => {
+        if (data && data.ok) {
+          updateStatusUI(data);
+        }
+      })
+      .catch(() => {});
 
-  setupSSE();
+    setupSSE();
+  }
+
+  loadInitialData();
 })();
