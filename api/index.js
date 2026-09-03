@@ -1,9 +1,9 @@
-// Root API health endpoint
-module.exports = (req, res) => {
-  res.status(200).json({
-    ok: true,
-    service: 'colab-vps-vercel-gateway',
-    status: 'online',
-    timestamp: Date.now()
-  });
+// ============================================================
+//  ⚡ Vercel Serverless Route Handler — Forward to Unified index.js
+// ============================================================
+
+const rootHandler = require('../index.js');
+
+module.exports = function handler(req, res) {
+  return rootHandler(req, res);
 };

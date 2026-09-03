@@ -394,30 +394,52 @@
       return;
     }
 
+    // Persist in browser localStorage immediately
+    try {
+      localStorage.setItem('saved_google_cookies', raw);
+    } catch (_) {}
+
     btnImportCookies.disabled = true;
     cookiesStatusMsg.className = 'status-msg';
     cookiesStatusMsg.textContent = 'Saving cookies permanently to profile & disk backup...';
 
     try {
-      const res = await fetch('/api/cookies', {
+      let res = await fetch('/api/cookies', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(parsed),
       });
-      const data = await res.json();
+
+      // If /api/cookies failed with 404, try /api/cookies/import
+      if (res.status === 404) {
+        res = await fetch('/api/cookies/import', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(parsed),
+        });
+      }
+
+      const text = await res.text();
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch (_) {
+        throw new Error(res.ok ? 'Server returned non-JSON response' : `Server error (${res.status})`);
+      }
+
       if (data.ok) {
         cookiesStatusMsg.className = 'status-msg success';
-        cookiesStatusMsg.textContent = `✓ Successfully saved ${data.count} cookies! Session will persist across all restarts.`;
+        cookiesStatusMsg.textContent = `✓ Successfully saved ${data.count || parsed.length || 0} cookies! Session will persist across all restarts.`;
         cookieStatusBadge.textContent = 'Profile: Ready ✓';
         cookieStatusBadge.style.color = '#22c55e';
         setTimeout(closeCookies, 2000);
       } else {
         cookiesStatusMsg.className = 'status-msg error';
-        cookiesStatusMsg.textContent = 'Error: ' + (data.error || data.message);
+        cookiesStatusMsg.textContent = 'Error: ' + (data.error || data.message || 'Failed to save');
       }
     } catch (e) {
       cookiesStatusMsg.className = 'status-msg error';
-      cookiesStatusMsg.textContent = 'Network error: ' + e.message;
+      cookiesStatusMsg.textContent = 'Save error: ' + e.message;
     } finally {
       btnImportCookies.disabled = false;
     }
