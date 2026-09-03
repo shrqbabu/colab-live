@@ -197,7 +197,7 @@ module.exports = async function handler(req, res) {
 
   // ── 1. API ROUTES: /api/* ──
   if (pathname.startsWith('/api/') || pathname === '/api') {
-    const apiPath = pathname.replace(/^\/api/, '');
+    let apiPath = pathname.replace(/^\/api/, '');
     if (!apiPath.startsWith('/')) apiPath = '/' + apiPath;
 
     // ── Auth Endpoints ──
