@@ -215,7 +215,8 @@ class UnifiedGoogleWorker extends EventEmitter {
         '--disable-infobars',
         '--window-size=1400,900',
         '--lang=en-US,en',
-        '--disable-features=ThirdPartyCookiePhaseout,BlockThirdPartyCookies,PrivacySandboxSettings4',
+        '--disable-features=IsolateOrigins,site-per-process,ThirdPartyCookiePhaseout,BlockThirdPartyCookies,PrivacySandboxSettings4',
+        '--disable-site-isolation-trials',
         '--test-third-party-cookie-phaseout=disabled',
       ];
       if (!isLinux) {
@@ -380,16 +381,31 @@ class UnifiedGoogleWorker extends EventEmitter {
 
         await this.handleCloudShellDialogs();
 
+        const preCheck = await this.checkCloudShellState();
+        if (preCheck.state === 'LOGIN_REQUIRED') {
+          this.isConnected = false;
+          this.runtimeState = preCheck;
+          this.log('Google login/cookies required. Please import fresh cookies from console.cloud.google.com.', 'warn');
+          this.emit('status_change', this.getStatus());
+          await this.sleep(20000);
+          continue;
+        }
+
         // STEP 2: Execute command (docker start omniroute)
         this.log(`🚀 Sending startup command: "${cmd}"...`, 'info');
         this.runtimeState = { state: 'SENDING_COMMAND', reason: 'typing-startup-cmd' };
         this.emit('status_change', this.getStatus());
 
-        await this.sendTerminalCommand(cmd);
-
-        this.isConnected = true;
-        this.runtimeState = { state: 'CONNECTED', reason: 'passive-monitoring-active' };
-        this.log('🔒 Active Cloud Shell session established. ZERO clicks will be performed during session.', 'info');
+        const cmdRes = await this.sendTerminalCommand(cmd);
+        if (cmdRes && cmdRes.ok) {
+          this.isConnected = true;
+          this.runtimeState = { state: 'CONNECTED', reason: 'passive-monitoring-active' };
+          this.log('🔒 Active Cloud Shell session established. ZERO clicks will be performed during session.', 'info');
+        } else {
+          this.isConnected = false;
+          this.runtimeState = { state: 'TERMINAL_WAITING', reason: cmdRes ? cmdRes.error || cmdRes.message : 'no-terminal' };
+          this.log('Terminal was not ready for typing. Will monitor on next status check.', 'warn');
+        }
         this.emit('status_change', this.getStatus());
 
         // STEP 3: 10-Minute Passive Polling Loop
@@ -870,6 +886,9 @@ class UnifiedGoogleWorker extends EventEmitter {
 
       if (Array.isArray(cookies) && cookies.length > 0) {
         const formatted = this._cleanAndFormatCookies(cookies);
+        try {
+          await this.context.clearCookies();
+        } catch (_) {}
         await this.context.addCookies(formatted);
         this.log(`Successfully injected ${formatted.length} formatted cookies into context.`, 'info');
         // Auto-refresh saved cookies periodically
@@ -1033,6 +1052,9 @@ class UnifiedGoogleWorker extends EventEmitter {
     // 2. Inject into active browser context if running
     if (this.context) {
       try {
+        try {
+          await this.context.clearCookies();
+        } catch (_) {}
         await this.context.addCookies(pwCookies);
         this.log(`Injected ${pwCookies.length} cookies into running session.`, 'info');
 
