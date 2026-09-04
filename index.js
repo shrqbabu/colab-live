@@ -145,6 +145,9 @@ function generateToken() {
 }
 
 async function parseJsonBody(req) {
+  if (req.body && typeof req.body === 'object' && !Buffer.isBuffer(req.body)) {
+    return req.body;
+  }
   const buffer = await getRequestBody(req);
   try {
     return buffer.length > 0 ? JSON.parse(buffer.toString('utf-8')) : {};
@@ -173,7 +176,7 @@ module.exports = async function handler(req, res) {
     return res.end();
   }
 
-  // Determine requested path
+  // ── Accurate Path Extraction (Supports Vercel dynamic routes & rewrites) ──
   const rawUrl = req.url || '/';
   let parsedReqUrl;
   try {
@@ -182,198 +185,50 @@ module.exports = async function handler(req, res) {
     parsedReqUrl = new URL('/', 'http://localhost');
   }
 
-  let pathname = parsedReqUrl.searchParams.get('__path') || parsedReqUrl.pathname || '/';
-  if (!pathname.startsWith('/')) pathname = '/' + pathname;
+  let pathname = '';
 
-  // Check headers if rewritten by Vercel
-  const xMatched = req.headers['x-matched-path'] || req.headers['x-forwarded-url'] || req.headers['x-original-url'];
-  if (xMatched && xMatched !== '/index.js' && !parsedReqUrl.searchParams.has('__path')) {
-    try {
-      pathname = new URL(xMatched, 'http://localhost').pathname;
-    } catch (_) {
+  // 1. If invoked via Vercel api/[...path].js dynamic route (req.query.path)
+  if (req.query && req.query.path) {
+    const qp = Array.isArray(req.query.path) ? req.query.path.join('/') : req.query.path;
+    pathname = '/api/' + qp.replace(/^\/+/, '');
+  }
+
+  // 2. If explicit __path search parameter passed via vercel.json rewrite
+  if (!pathname && parsedReqUrl.searchParams.has('__path')) {
+    pathname = parsedReqUrl.searchParams.get('__path');
+  }
+
+  // 3. If x-matched-path or x-forwarded-url header
+  if (!pathname) {
+    const xMatched = req.headers['x-matched-path'] || req.headers['x-forwarded-url'] || req.headers['x-original-url'];
+    if (xMatched && xMatched !== '/index.js' && !xMatched.includes('[...path]')) {
       pathname = xMatched.split('?')[0];
     }
   }
 
+  // 4. Default to req.url pathname
+  if (!pathname) {
+    pathname = parsedReqUrl.pathname || '/';
+  }
+
+  if (pathname.includes('[...path]')) {
+    const pParam = parsedReqUrl.searchParams.get('path') || (req.query && req.query.path) || '';
+    const cleanP = Array.isArray(pParam) ? pParam.join('/') : pParam;
+    pathname = '/api/' + cleanP.replace(/^\/+/, '');
+  }
+
+  if (!pathname.startsWith('/')) pathname = '/' + pathname;
+
+  const isApiRequest = pathname.startsWith('/api') || (req.query && req.query.path) || parsedReqUrl.searchParams.has('__path') && parsedReqUrl.searchParams.get('__path').startsWith('/api');
+
   // ── 1. API ROUTES: /api/* ──
-  if (pathname.startsWith('/api/') || pathname === '/api') {
+  if (isApiRequest) {
     let apiPath = pathname.replace(/^\/api/, '');
     if (!apiPath.startsWith('/')) apiPath = '/' + apiPath;
 
-    // ── Auth Endpoints ──
-    if (apiPath === '/login' && req.method === 'POST') {
-      try {
-        const body = await parseJsonBody(req);
-        const conf = worker.loadConfig();
-        const email = body.email || '';
-        const password = body.password || '';
-
-        if (email === (conf.auth?.email || 'admin@cloudshell.pro') &&
-            password === (conf.auth?.password || 'password123')) {
-          const token = generateToken();
-          authTokens.set(token, { email, created: Date.now() });
-          return sendResponse(res, 200, { ok: true, token });
-        }
-        return sendResponse(res, 401, { ok: false, error: 'Invalid credentials' });
-      } catch (e) {
-        return sendResponse(res, 400, { ok: false, error: e.message });
-      }
-    }
-
-    if (apiPath === '/logout' && req.method === 'POST') {
-      const token = req.headers['authorization']?.replace(/^Bearer\s+/i, '') || '';
-      authTokens.delete(token);
-      return sendResponse(res, 200, { ok: true });
-    }
-
-    if (apiPath === '/auth/check') {
-      const token = req.headers['authorization']?.replace(/^Bearer\s+/i, '') || '';
-      return sendResponse(res, 200, { ok: true, authenticated: authTokens.has(token) });
-    }
-
-    if (apiPath === '/auth/update' && req.method === 'POST') {
-      const token = req.headers['authorization']?.replace(/^Bearer\s+/i, '') || '';
-      if (!authTokens.has(token)) return sendResponse(res, 401, { ok: false, error: 'Unauthorized' });
-      try {
-        const body = await parseJsonBody(req);
-        worker.saveConfig({ auth: { password: body.newPassword } });
-        return sendResponse(res, 200, { ok: true });
-      } catch (e) {
-        return sendResponse(res, 400, { ok: false, error: e.message });
-      }
-    }
-
-    // ── Status & SSE ──
-    if (apiPath === '/status' && req.method === 'GET') {
-      return sendResponse(res, 200, { ok: true, ...worker.getStatus() });
-    }
-
-    if (apiPath === '/logs' && req.method === 'GET') {
-      return sendResponse(res, 200, { ok: true, logs: logBuffer });
-    }
-
-    if (apiPath === '/logs/clear' && req.method === 'POST') {
-      logBuffer.length = 0;
-      return sendResponse(res, 200, { ok: true });
-    }
-
-    // SSE Stream
-    if (apiPath === '/events' && req.method === 'GET') {
-      res.writeHead(200, {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        'Connection': 'keep-alive',
-      });
-      res.write(`event: init\ndata: ${JSON.stringify({ status: worker.getStatus(), logs: logBuffer })}\n\n`);
-      sseClients.add(res);
-
-      req.on('close', () => {
-        sseClients.delete(res);
-      });
-      return;
-    }
-
-    // ── Worker Controls ──
-    if ((apiPath === '/worker/start' || apiPath === '/start') && req.method === 'POST') {
-      const result = await worker.start();
-      return sendResponse(res, result.ok ? 200 : 500, result);
-    }
-
-    if ((apiPath === '/worker/stop' || apiPath === '/stop') && req.method === 'POST') {
-      const result = await worker.stop();
-      return sendResponse(res, 200, result);
-    }
-
-    if ((apiPath === '/worker/restart' || apiPath === '/restart') && req.method === 'POST') {
-      await worker.stop();
-      setTimeout(() => worker.start(), 1000);
-      return sendResponse(res, 200, { ok: true });
-    }
-
-    if ((apiPath === '/worker/run-all' || apiPath === '/run-all') && req.method === 'POST') {
-      const result = await worker.triggerColabRunAll();
-      return sendResponse(res, result.ok ? 200 : 500, result);
-    }
-
-    if ((apiPath === '/worker/reconnect' || apiPath === '/reconnect') && req.method === 'POST') {
-      const result = await worker.forceReconnect();
-      return sendResponse(res, 200, result);
-    }
-
-    // ── Remote Command ──
-    if (apiPath === '/send-command' && req.method === 'POST') {
-      try {
-        const body = await parseJsonBody(req);
-        const result = await worker.sendTerminalCommand(body.command);
-        return sendResponse(res, result.ok ? 200 : 500, result);
-      } catch (e) {
-        return sendResponse(res, 400, { ok: false, error: e.message });
-      }
-    }
-
-    // ── Screenshot ──
-    if (apiPath === '/screenshot' && req.method === 'GET') {
-      const buffer = await worker.takeScreenshot();
-      if (buffer) {
-        res.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'no-cache' });
-        res.end(buffer);
-      } else {
-        sendResponse(res, 404, 'No screenshot available');
-      }
-      return;
-    }
-
-    // ── Config & Cookies ──
-    if (apiPath === '/config' && req.method === 'GET') {
-      const conf = worker.loadConfig();
-      return sendResponse(res, 200, { ok: true, config: conf });
-    }
-
-    if (apiPath === '/config' && req.method === 'POST') {
-      try {
-        const body = await parseJsonBody(req);
-        worker.saveConfig(body);
-        return sendResponse(res, 200, { ok: true, config: worker.config });
-      } catch (e) {
-        return sendResponse(res, 400, { ok: false, error: e.message });
-      }
-    }
-
-    if ((apiPath === '/cookies/import' || apiPath === '/cookies') && req.method === 'POST') {
-      try {
-        const body = await parseJsonBody(req);
-        const result = await worker.importCookies(body);
-        return sendResponse(res, result.ok ? 200 : 400, result);
-      } catch (e) {
-        return sendResponse(res, 400, { ok: false, error: e.message });
-      }
-    }
-
-    if (apiPath === '/profile/import' && req.method === 'POST') {
-      try {
-        const body = await parseJsonBody(req);
-        const newConfig = { ...worker.config };
-        if (body.profile) newConfig.profile = body.profile;
-        worker.saveConfig(newConfig);
-        return sendResponse(res, 200, { ok: true });
-      } catch (e) {
-        return sendResponse(res, 400, { ok: false, error: e.message });
-      }
-    }
-
-    // ── Health Check (for VPS Gateway) ──
-    if (apiPath === '/health') {
-      return sendResponse(res, 200, {
-        ok: true,
-        isRunning: worker.isRunning,
-        uptimeSec: Math.floor(process.uptime()),
-        mode: worker.config.mode,
-      });
-    }
-
-    // ── VPS Gateway Status ──
+    // ── VPS Gateway Status / Health ──
     if (apiPath === '/vps-gateway-status' || apiPath === '/gateway-info') {
-      const rawVpsUrl = process.env.VPS_URL || process.env.ORACLE_VPS_URL || req.headers['x-vps-url'];
+      const rawVpsUrl = req.headers['x-vps-url'] || process.env.VPS_URL || process.env.ORACLE_VPS_URL;
       const vpsUrl = parseVpsUrl(rawVpsUrl);
       return sendResponse(res, 200, {
         ok: true,
@@ -385,13 +240,14 @@ module.exports = async function handler(req, res) {
       });
     }
 
-    // ── Proxy to VPS if configured ──
-    const rawVpsUrl = process.env.VPS_URL || process.env.ORACLE_VPS_URL || req.headers['x-vps-url'];
+    // ── Proxy to VPS if configured (Forwarding to Oracle VPS Node on Port 80) ──
+    const rawVpsUrl = req.headers['x-vps-url'] || process.env.VPS_URL || process.env.ORACLE_VPS_URL;
     const vpsUrl = parseVpsUrl(rawVpsUrl);
 
     if (vpsUrl) {
       const forwardQueryParams = new URLSearchParams(parsedReqUrl.searchParams);
       forwardQueryParams.delete('__path');
+      forwardQueryParams.delete('path');
       const forwardQueryStr = forwardQueryParams.toString() ? '?' + forwardQueryParams.toString() : '';
       const targetEndpoint = `${vpsUrl}/api${apiPath}${forwardQueryStr}`;
 
@@ -408,7 +264,7 @@ module.exports = async function handler(req, res) {
           }
         }
 
-        const apiSecret = process.env.VPS_API_SECRET || process.env.API_SECRET || req.headers['x-api-secret'] || req.headers['x-vps-key'];
+        const apiSecret = req.headers['x-api-secret'] || req.headers['x-vps-key'] || process.env.VPS_API_SECRET || process.env.API_SECRET;
         if (apiSecret) {
           forwardHeaders['x-api-secret'] = apiSecret;
         }
@@ -503,10 +359,159 @@ module.exports = async function handler(req, res) {
       return;
     }
 
-    return sendResponse(res, 404, { ok: false, error: 'API endpoint not found' });
+    // ── Local Fallback Handlers (when no VPS_URL configured) ──
+
+    // Auth
+    if (apiPath === '/login' && req.method === 'POST') {
+      try {
+        const body = await parseJsonBody(req);
+        const conf = worker.loadConfig();
+        const email = body.email || '';
+        const password = body.password || '';
+
+        if (email === (conf.auth?.email || 'admin@cloudshell.pro') &&
+            password === (conf.auth?.password || 'password123')) {
+          const token = generateToken();
+          authTokens.set(token, { email, created: Date.now() });
+          return sendResponse(res, 200, { ok: true, token });
+        }
+        return sendResponse(res, 401, { ok: false, error: 'Invalid credentials' });
+      } catch (e) {
+        return sendResponse(res, 400, { ok: false, error: e.message });
+      }
+    }
+
+    if (apiPath === '/logout' && req.method === 'POST') {
+      const token = req.headers['authorization']?.replace(/^Bearer\s+/i, '') || '';
+      authTokens.delete(token);
+      return sendResponse(res, 200, { ok: true });
+    }
+
+    if (apiPath === '/auth/check') {
+      const token = req.headers['authorization']?.replace(/^Bearer\s+/i, '') || '';
+      return sendResponse(res, 200, { ok: true, authenticated: authTokens.has(token) });
+    }
+
+    // Status & SSE
+    if (apiPath === '/status' && req.method === 'GET') {
+      return sendResponse(res, 200, { ok: true, ...worker.getStatus() });
+    }
+
+    if (apiPath === '/logs' && req.method === 'GET') {
+      return sendResponse(res, 200, { ok: true, logs: logBuffer });
+    }
+
+    if (apiPath === '/logs/clear' && req.method === 'POST') {
+      logBuffer.length = 0;
+      return sendResponse(res, 200, { ok: true });
+    }
+
+    // SSE Stream
+    if (apiPath === '/events' && req.method === 'GET') {
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+      });
+      res.write(`event: init\ndata: ${JSON.stringify({ status: worker.getStatus(), logs: logBuffer })}\n\n`);
+      sseClients.add(res);
+
+      req.on('close', () => {
+        sseClients.delete(res);
+      });
+      return;
+    }
+
+    // Worker Controls
+    if ((apiPath === '/worker/start' || apiPath === '/start') && req.method === 'POST') {
+      const result = await worker.start();
+      return sendResponse(res, result.ok ? 200 : 500, result);
+    }
+
+    if ((apiPath === '/worker/stop' || apiPath === '/stop') && req.method === 'POST') {
+      const result = await worker.stop();
+      return sendResponse(res, 200, result);
+    }
+
+    if ((apiPath === '/worker/restart' || apiPath === '/restart') && req.method === 'POST') {
+      await worker.stop();
+      setTimeout(() => worker.start(), 1000);
+      return sendResponse(res, 200, { ok: true });
+    }
+
+    if ((apiPath === '/worker/run-all' || apiPath === '/run-all') && req.method === 'POST') {
+      const result = await worker.triggerColabRunAll();
+      return sendResponse(res, result.ok ? 200 : 500, result);
+    }
+
+    if ((apiPath === '/worker/reconnect' || apiPath === '/reconnect') && req.method === 'POST') {
+      const result = await worker.forceReconnect();
+      return sendResponse(res, 200, result);
+    }
+
+    // Remote Command
+    if (apiPath === '/send-command' && req.method === 'POST') {
+      try {
+        const body = await parseJsonBody(req);
+        const result = await worker.sendTerminalCommand(body.command);
+        return sendResponse(res, result.ok ? 200 : 500, result);
+      } catch (e) {
+        return sendResponse(res, 400, { ok: false, error: e.message });
+      }
+    }
+
+    // Screenshot
+    if (apiPath === '/screenshot' && req.method === 'GET') {
+      const buffer = await worker.takeScreenshot();
+      if (buffer) {
+        res.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'no-cache' });
+        res.end(buffer);
+      } else {
+        sendResponse(res, 404, 'No screenshot available');
+      }
+      return;
+    }
+
+    // Config & Cookies
+    if (apiPath === '/config' && req.method === 'GET') {
+      const conf = worker.loadConfig();
+      return sendResponse(res, 200, { ok: true, config: conf });
+    }
+
+    if (apiPath === '/config' && req.method === 'POST') {
+      try {
+        const body = await parseJsonBody(req);
+        worker.saveConfig(body);
+        return sendResponse(res, 200, { ok: true, config: worker.config });
+      } catch (e) {
+        return sendResponse(res, 400, { ok: false, error: e.message });
+      }
+    }
+
+    if ((apiPath === '/cookies/import' || apiPath === '/cookies') && req.method === 'POST') {
+      try {
+        const body = await parseJsonBody(req);
+        const result = await worker.importCookies(body);
+        return sendResponse(res, result.ok ? 200 : 400, result);
+      } catch (e) {
+        return sendResponse(res, 400, { ok: false, error: e.message });
+      }
+    }
+
+    // Health
+    if (apiPath === '/health') {
+      return sendResponse(res, 200, {
+        ok: true,
+        isRunning: worker.isRunning,
+        uptimeSec: Math.floor(process.uptime()),
+        mode: worker.config.mode,
+      });
+    }
+
+    return sendResponse(res, 404, { ok: false, error: `API endpoint not found: ${apiPath}` });
   }
 
-  // ── 2. STATIC FILES ──
+  // ── 2. STATIC FILES (HTML / CSS / JS) ──
   let requestedFile = (pathname === '/' || pathname === '/index.html') ? 'index.html' : pathname.replace(/^\/+/, '');
   let filePath = path.join(__dirname, requestedFile);
 
