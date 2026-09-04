@@ -903,7 +903,6 @@ class UnifiedGoogleWorker extends EventEmitter {
       const cookie = {
         name: String(c.name).trim(),
         value: String(c.value),
-        path: c.path || '/',
         httpOnly: Boolean(c.httpOnly),
         secure: isSecure,
       };
@@ -917,21 +916,21 @@ class UnifiedGoogleWorker extends EventEmitter {
       }
 
       if (c.name.startsWith('__Host-')) {
-        // __Host- cookies must not have domain attribute per RFC 6265bis
+        // __Host- cookies must have url and MUST NOT have domain or path per Playwright/RFC
         let cleanHost = (c.domain || '').replace(/^\.+/, '');
         if (!cleanHost) cleanHost = 'accounts.google.com';
         cookie.url = `https://${cleanHost}`;
-      } else if (c.hostOnly || (c.domain && !c.domain.startsWith('.'))) {
-        let cleanHost = (c.domain || '').replace(/^\.+/, '');
-        if (!cleanHost) cleanHost = 'google.com';
-        cookie.url = `https://${cleanHost}`;
-      } else if (c.domain) {
-        cookie.domain = c.domain;
       } else {
-        cookie.domain = '.google.com';
+        // All other cookies must have domain and path, and MUST NOT have url
+        let dom = c.domain ? c.domain.trim() : '.google.com';
+        if (!dom.startsWith('.') && !dom.includes('localhost')) {
+          dom = '.' + dom;
+        }
+        cookie.domain = dom;
+        cookie.path = c.path || '/';
       }
 
-      const dedupeKey = `${cookie.name}|${cookie.domain || cookie.url}|${cookie.path}`;
+      const dedupeKey = `${cookie.name}|${cookie.domain || cookie.url}|${cookie.path || ''}`;
       if (!seen.has(dedupeKey)) {
         seen.add(dedupeKey);
         formatted.push(cookie);
