@@ -213,14 +213,18 @@ class UnifiedGoogleWorker extends EventEmitter {
         '--disable-gpu',
         '--disable-blink-features=AutomationControlled',
         '--disable-infobars',
-        '--window-size=1366,768',
+        '--window-size=1400,900',
         '--lang=en-US,en',
+        '--disable-features=IsolateOrigins,site-per-process,SameSiteByDefaultCookies,CookiesWithoutSameSiteMustBeSecure',
+        '--disable-site-isolation-trials',
+        '--disable-web-security',
+        '--allow-running-insecure-content',
       ];
 
       const executablePath = this._detectExecutablePath();
       const launchOpts = {
         headless: isHeadless,
-        viewport: { width: 1366, height: 768 },
+        viewport: { width: 1400, height: 900 },
         args: launchArgs,
         ignoreDefaultArgs: ['--enable-automation'],
         userAgent:
@@ -286,6 +290,13 @@ class UnifiedGoogleWorker extends EventEmitter {
         }
       });
 
+      // Prime Google Auth session
+      try {
+        this.log('Priming Google session...', 'info');
+        await this.page.goto('https://accounts.google.com/', { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
+        await this.sleep(1500);
+      } catch (_) {}
+
       this.log(`Navigating to ${targetUrl}...`, 'info');
       await this.page.goto(targetUrl, {
         waitUntil: 'domcontentloaded',
@@ -293,6 +304,9 @@ class UnifiedGoogleWorker extends EventEmitter {
       }).catch((e) => {
         this.log(`Navigation note: ${e.message}`, 'warn');
       });
+
+      await this.sleep(2000);
+      await this.handleCloudShellDialogs();
 
       try {
         this.pageTitle = (await this.page.title()) || (mode === 'colab' ? 'Google Colab' : 'Google Cloud Shell');
@@ -873,12 +887,15 @@ class UnifiedGoogleWorker extends EventEmitter {
 
       formatted.push(cookie);
 
-      // Replicate root .google.com session tokens to Cloud Shell & Colab auth subdomains
+      // Replicate root and regional google session tokens (.google.co.uk, .google.co.in, etc.) to .google.com and cloud domains
       if (
-        (domain === '.google.com' || domain === 'google.com') &&
+        domain.includes('google.') &&
         !c.name.startsWith('__Host-') &&
-        ['SID', 'HSID', 'SSID', 'APISID', 'SAPISID', '__Secure-1PSID', '__Secure-3PSID', '__Secure-1PAPISID', '__Secure-3PAPISID', '__Secure-1PSIDTS', '__Secure-3PSIDTS', '__Secure-1PSIDCC', '__Secure-3PSIDCC'].includes(c.name)
+        ['SID', 'HSID', 'SSID', 'APISID', 'SAPISID', '__Secure-1PSID', '__Secure-3PSID', '__Secure-1PAPISID', '__Secure-3PAPISID', '__Secure-1PSIDTS', '__Secure-3PSIDTS', '__Secure-1PSIDCC', '__Secure-3PSIDCC', 'NID', 'SOCS', 'CONSENT', 'AEC', '1P_JAR'].includes(c.name)
       ) {
+        if (domain !== '.google.com') {
+          formatted.push({ ...cookie, domain: '.google.com' });
+        }
         formatted.push({ ...cookie, domain: '.cloud.google.com' });
         formatted.push({ ...cookie, domain: '.googleusercontent.com' });
         formatted.push({ ...cookie, domain: 'shell.cloud.google.com' });
@@ -913,12 +930,19 @@ class UnifiedGoogleWorker extends EventEmitter {
       try {
         await this.context.addCookies(pwCookies);
         this.log(`Injected ${pwCookies.length} cookies into running session.`, 'info');
+
+        // Prime Google Auth session
+        try {
+          await this.page.goto('https://accounts.google.com/', { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
+          await this.sleep(1500);
+        } catch (_) {}
+
         const mode = this.config.mode || 'cloudshell';
         const target = mode === 'colab' ? this.config.colabUrl : this.config.cloudShellUrl;
         await this.page.goto(target, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
         await this.sleep(4000);
         await this.handleCloudShellDialogs();
-        const valid = !(this.page.url() || '').includes('accounts.google.com');
+        const valid = !(this.page.url() || '').includes('accounts.google.com') && !(this.page.url() || '').includes('CookieMismatch') && !(this.page.url() || '').includes('support.google.com');
         return { ok: true, count: pwCookies.length, appliedTo: 'running-session', valid };
       } catch (e) {
         this.log(`addCookies failed: ${e.message}`, 'warn');
