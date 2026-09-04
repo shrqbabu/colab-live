@@ -919,6 +919,10 @@ class UnifiedGoogleWorker extends EventEmitter {
       if (c.name.startsWith('__Host-')) {
         // __Host- cookies must not have domain attribute per RFC 6265bis
         let cleanHost = (c.domain || '').replace(/^\.+/, '');
+        if (!cleanHost) cleanHost = 'accounts.google.com';
+        cookie.url = `https://${cleanHost}`;
+      } else if (c.hostOnly || (c.domain && !c.domain.startsWith('.'))) {
+        let cleanHost = (c.domain || '').replace(/^\.+/, '');
         if (!cleanHost) cleanHost = 'google.com';
         cookie.url = `https://${cleanHost}`;
       } else if (c.domain) {
@@ -968,6 +972,12 @@ class UnifiedGoogleWorker extends EventEmitter {
         const mode = this.config.mode || 'cloudshell';
         const target = mode === 'colab' ? this.config.colabUrl : this.config.cloudShellUrl;
         if (this.page && !this.page.isClosed()) {
+          try {
+            await this.page.goto('https://accounts.google.com/', { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
+            await this.sleep(1500);
+            await this.handleCloudShellDialogs();
+          } catch (_) {}
+
           await this.page.goto(target, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
           await this.sleep(3000);
           if (mode === 'cloudshell') {
