@@ -421,14 +421,22 @@
 
   if (btnSaveVps) {
     btnSaveVps.addEventListener('click', async () => {
-      const inputVal = vpsUrlInput.value.trim().replace(/\/+$/, '');
+      let inputVal = vpsUrlInput.value.trim().replace(/\/+$/, '');
       const secretVal = vpsSecretInput.value.trim();
 
-      if (inputVal && !/^https?:\/\//i.test(inputVal)) {
-        customVpsUrl = 'http://' + inputVal;
-      } else {
-        customVpsUrl = inputVal;
+      if (inputVal) {
+        if (!/^https?:\/\//i.test(inputVal)) {
+          inputVal = 'http://' + inputVal;
+        }
+        try {
+          const u = new URL(inputVal);
+          if (!u.port && u.protocol === 'http:') {
+            inputVal = `http://${u.hostname}:8080`;
+          }
+        } catch (_) {}
       }
+
+      customVpsUrl = inputVal;
       customVpsSecret = secretVal;
 
       localStorage.setItem('google_vps_url', customVpsUrl);

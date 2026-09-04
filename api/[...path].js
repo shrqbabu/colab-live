@@ -108,7 +108,9 @@ function parseVpsUrl(input) {
     if (!host || host === 'http' || host === 'https' || host.length < 3 || host.includes('"') || host.includes("'")) {
       return null;
     }
-    return u.origin;
+    const isHttps = u.protocol === 'https:';
+    const port = u.port ? u.port : (isHttps ? 443 : 8080);
+    return `${u.protocol}//${host}:${port}`;
   } catch (_) {
     return null;
   }
@@ -235,7 +237,7 @@ module.exports = async function handler(req, res) {
     const options = {
       method: req.method,
       hostname: targetParsed.hostname,
-      port: targetParsed.port || (isHttps ? 443 : 80),
+      port: targetParsed.port || (isHttps ? 443 : 8080),
       path: targetParsed.pathname + targetParsed.search,
       headers: forwardHeaders,
       timeout: 25000,
