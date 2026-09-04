@@ -275,6 +275,9 @@ class UnifiedGoogleWorker extends EventEmitter {
       // Launch Persistent Context (Preserves Cookies, Storage, and Session State naturally)
       this.context = await chromium.launchPersistentContext(this.userDataDir, launchOpts);
 
+      // Auto-load saved cookies backup into context if available
+      await this._loadSavedCookiesIntoContext();
+
       this.page = this.context.pages()[0] || (await this.context.newPage());
 
       this.page.on('crash', async () => {
@@ -300,6 +303,12 @@ class UnifiedGoogleWorker extends EventEmitter {
           this.emit('status_change', this.getStatus());
         }
       });
+
+      // Prime Google session via accounts.google.com first
+      try {
+        await this.page.goto('https://accounts.google.com/', { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
+        await this.sleep(1500);
+      } catch (_) {}
 
       this.log(`Navigating to ${targetUrl}...`, 'info');
       await this.page.goto(targetUrl, {
@@ -1004,6 +1013,33 @@ class UnifiedGoogleWorker extends EventEmitter {
       }
     } finally {
       this._reconnectLock = false;
+    }
+  }
+
+  // ── Persistent Cookie Injection & Disk Backup ──
+  async _loadSavedCookiesIntoContext() {
+    if (!this.context) return;
+    try {
+      let cookies = null;
+      if (process.env.GOOGLE_COOKIES) {
+        try {
+          cookies = JSON.parse(process.env.GOOGLE_COOKIES);
+        } catch (_) {}
+      }
+      if (!cookies && fs.existsSync(this.savedCookiesPath)) {
+        try {
+          cookies = JSON.parse(fs.readFileSync(this.savedCookiesPath, 'utf8'));
+        } catch (_) {}
+      }
+      if (Array.isArray(cookies) && cookies.length > 0) {
+        const formatted = this._cleanAndFormatCookies(cookies);
+        if (formatted.length > 0) {
+          await this.context.addCookies(formatted);
+          this.log(`Injected ${formatted.length} cookies from disk backup into session.`, 'info');
+        }
+      }
+    } catch (e) {
+      this.log(`Note loading saved cookies: ${e.message}`, 'warn');
     }
   }
 
