@@ -365,7 +365,7 @@
       dot.classList.add('status-connected');
     } else if (stateName.includes('WAIT') || stateName.includes('STARTING') || stateName.includes('INITIALIZING')) {
       dot.classList.add('status-wait');
-    } else if (stateName === 'DISCONNECTED' || stateName === 'ERROR' || stateName === 'LOGIN_REQUIRED') {
+    } else if (stateName === 'DISCONNECTED' || stateName === 'ERROR' || stateName === 'LOGIN_REQUIRED' || stateName === 'COOKIE_ERROR') {
       dot.classList.add('status-disconnected');
     } else {
       dot.classList.add('status-idle');

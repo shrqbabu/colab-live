@@ -1,5 +1,6 @@
 // ============================================================
 //  🚀 UNIFIED GOOGLE WORKER — Colab & Cloud Shell Automation
+//  Architecture: Persistent Chromium Profile as Primary Source
 // ============================================================
 
 const { chromium } = require('playwright');
@@ -182,6 +183,35 @@ class UnifiedGoogleWorker extends EventEmitter {
     return undefined;
   }
 
+  _cleanStaleLocks() {
+    if (!fs.existsSync(this.userDataDir)) return;
+    const lockFiles = ['SingletonLock', 'SingletonCookie', 'SingletonSocket'];
+    for (const f of lockFiles) {
+      const p = path.join(this.userDataDir, f);
+      try {
+        if (fs.existsSync(p) || fs.lstatSync(p).isSymbolicLink()) {
+          if (f === 'SingletonLock') {
+            try {
+              const target = fs.readlinkSync(p);
+              const parts = target.split('-');
+              const pid = parseInt(parts[parts.length - 1], 10);
+              if (pid && !isNaN(pid)) {
+                try {
+                  process.kill(pid, 0);
+                  // Process is alive, do not remove
+                  continue;
+                } catch (_) {
+                  // Process is dead
+                }
+              }
+            } catch (_) {}
+          }
+          fs.unlinkSync(p);
+        }
+      } catch (_) {}
+    }
+  }
+
   async start() {
     if (this._startLock || this.isRunning) {
       this.log('Worker is already running or starting', 'warn');
@@ -201,7 +231,7 @@ class UnifiedGoogleWorker extends EventEmitter {
     const isHeadless = this.config.headless !== false && process.env.HEADLESS !== 'false';
     const targetUrl = mode === 'colab' ? this.config.colabUrl : this.config.cloudShellUrl;
 
-    this.log(`[MODE: ${mode.toUpperCase()}] Starting Chromium (${isHeadless ? 'HEADLESS' : 'HEADED'})...`, 'info');
+    this.log(`[MODE: ${mode.toUpperCase()}] Launching persistent Chromium profile (${isHeadless ? 'HEADLESS' : 'HEADED'})...`, 'info');
     this.log(`Target URL: ${targetUrl}`, 'info');
 
     try {
@@ -210,14 +240,9 @@ class UnifiedGoogleWorker extends EventEmitter {
         '--no-sandbox',
         '--disable-setuid-sandbox',
         '--disable-dev-shm-usage',
-        '--disable-gpu',
-        '--disable-blink-features=AutomationControlled',
         '--disable-infobars',
         '--window-size=1400,900',
         '--lang=en-US,en',
-        '--disable-features=IsolateOrigins,site-per-process,ThirdPartyCookiePhaseout,BlockThirdPartyCookies,PrivacySandboxSettings4',
-        '--disable-site-isolation-trials',
-        '--test-third-party-cookie-phaseout=disabled',
       ];
       if (!isLinux) {
         launchArgs.push('--start-maximized');
@@ -229,13 +254,6 @@ class UnifiedGoogleWorker extends EventEmitter {
         viewport: { width: 1400, height: 900 },
         args: launchArgs,
         ignoreDefaultArgs: ['--enable-automation'],
-        userAgent:
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
-        locale: 'en-US',
-        timezoneId: 'America/New_York',
-        extraHTTPHeaders: {
-          'Accept-Language': 'en-US,en;q=0.9',
-        },
       };
       if (executablePath) {
         launchOpts.executablePath = executablePath;
@@ -245,38 +263,20 @@ class UnifiedGoogleWorker extends EventEmitter {
         fs.mkdirSync(this.userDataDir, { recursive: true });
       }
 
-      // Clear singleton lock files to avoid session contention
-      ['SingletonLock', 'SingletonCookie', 'SingletonSocket'].forEach((f) => {
-        const p = path.join(this.userDataDir, f);
-        if (fs.existsSync(p)) {
-          try {
-            fs.rmSync(p, { force: true });
-          } catch (_) {}
-        }
-      });
+      // Safely clean dead singleton locks if previous process crashed
+      this._cleanStaleLocks();
 
-      // Launch Persistent Context (Preserves Cookies and Local Storage permanently)
+      // Launch Persistent Context (Preserves Cookies, Storage, and Session State naturally)
       this.context = await chromium.launchPersistentContext(this.userDataDir, launchOpts);
-
-      // Bypass Google webdriver detection across all pages & iframes
-      await this.context.addInitScript(() => {
-        try {
-          Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-          window.navigator.chrome = { runtime: {} };
-          Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
-          Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
-        } catch (_) {}
-      });
-
-      // Auto-inject saved backup cookies if present
-      await this._loadSavedCookiesIntoContext();
 
       this.page = this.context.pages()[0] || (await this.context.newPage());
 
       this.page.on('crash', async () => {
-        this.log('Page crashed — attempting reload...', 'error');
+        this.log('Page crashed — attempting recovery...', 'error');
         this.runtimeState = { state: 'DISCONNECTED', reason: 'page-crash' };
-        await this.page.reload({ waitUntil: 'domcontentloaded' }).catch(() => {});
+        if (this.page && !this.page.isClosed()) {
+          await this.page.reload({ waitUntil: 'domcontentloaded' }).catch(() => {});
+        }
       });
 
       this.page.on('pageerror', (err) => {
@@ -287,31 +287,13 @@ class UnifiedGoogleWorker extends EventEmitter {
 
       this.context.on('close', () => {
         if (!this.isStopping) {
-          this.log('Browser context closed unexpectedly', 'warn');
+          this.log('Browser context closed', 'warn');
           this.isRunning = false;
           this.isConnected = false;
           this.runtimeState = { state: 'IDLE', reason: 'context-closed' };
           this.emit('status_change', this.getStatus());
         }
       });
-
-      // Warm up and prime Google Auth session first
-      try {
-        this.log('Priming Google session (accounts.google.com)...', 'info');
-        await this.page.goto('https://accounts.google.com/', {
-          waitUntil: 'domcontentloaded',
-          timeout: 20000,
-        }).catch(() => {});
-        await this.sleep(2000);
-        await this.handleCloudShellDialogs();
-
-        const primedUrl = this.page.url() || '';
-        if (primedUrl.includes('myaccount.google.com')) {
-          this.log('Google session verified: Logged in ✓', 'info');
-        } else if (primedUrl.includes('signin') || primedUrl.includes('ServiceLogin') || primedUrl.includes('identifier')) {
-          this.log('Google session: Not authenticated (fresh cookies required from console.cloud.google.com)', 'warn');
-        }
-      } catch (_) {}
 
       this.log(`Navigating to ${targetUrl}...`, 'info');
       await this.page.goto(targetUrl, {
@@ -322,7 +304,11 @@ class UnifiedGoogleWorker extends EventEmitter {
       });
 
       await this.sleep(3000);
-      await this.handleCloudShellDialogs();
+      if (mode === 'cloudshell') {
+        await this.handleCloudShellDialogs();
+      } else {
+        await this.dismissColabDialogs();
+      }
 
       try {
         this.pageTitle = (await this.page.title()) || (mode === 'colab' ? 'Google Colab' : 'Google Cloud Shell');
@@ -353,8 +339,8 @@ class UnifiedGoogleWorker extends EventEmitter {
 
   // ============================================================
   //  CLOUD SHELL MODE LIFECYCLE
-  //  - Wait 1 minute (60s)
-  //  - Run startup command (docker start omniroute)
+  //  - Wait 1 minute (60s) for container initialization
+  //  - Execute startup command (docker start omniroute)
   //  - ZERO CLICKS while active
   //  - Check every 10 mins
   //  - Auto-reconnect if ended
@@ -369,17 +355,17 @@ class UnifiedGoogleWorker extends EventEmitter {
         const state = await this.checkCloudShellState();
         this.runtimeState = state;
 
-        if (state.state === 'LOGIN_REQUIRED') {
+        if (state.state === 'LOGIN_REQUIRED' || state.state === 'COOKIE_ERROR') {
           this.isConnected = false;
-          this.log('Google login required. Please inject cookies via "Import Cookies".', 'warn');
+          this.log(`Google authentication required (${state.state}: ${state.reason}).`, 'warn');
           this.emit('status_change', this.getStatus());
           await this.sleep(30000);
           continue;
         }
 
-        // STEP 1: Wait 1 Minute (60s) for container initialization
-        this.log(`⏳ Waiting 1 minute (${waitSec}s) for Cloud Shell container & terminal to initialize...`, 'info');
-        this.runtimeState = { state: 'INITIALIZING_WAIT_1MIN', reason: `Waiting ${waitSec}s after load` };
+        // STEP 1: Wait for Cloud Shell container & terminal to initialize
+        this.log(`⏳ Waiting ${waitSec}s for Cloud Shell terminal initialization...`, 'info');
+        this.runtimeState = { state: 'INITIALIZING_WAIT', reason: `Waiting ${waitSec}s after load` };
         this.emit('status_change', this.getStatus());
 
         await this.sleep(waitSec * 1000);
@@ -389,16 +375,16 @@ class UnifiedGoogleWorker extends EventEmitter {
         await this.handleCloudShellDialogs();
 
         const preCheck = await this.checkCloudShellState();
-        if (preCheck.state === 'LOGIN_REQUIRED') {
+        if (preCheck.state === 'LOGIN_REQUIRED' || preCheck.state === 'COOKIE_ERROR') {
           this.isConnected = false;
           this.runtimeState = preCheck;
-          this.log('Google login/cookies required. Please import fresh cookies from console.cloud.google.com.', 'warn');
+          this.log(`Google authentication required (${preCheck.state}: ${preCheck.reason}).`, 'warn');
           this.emit('status_change', this.getStatus());
           await this.sleep(20000);
           continue;
         }
 
-        // STEP 2: Execute command (docker start omniroute)
+        // STEP 2: Execute startup command
         this.log(`🚀 Sending startup command: "${cmd}"...`, 'info');
         this.runtimeState = { state: 'SENDING_COMMAND', reason: 'typing-startup-cmd' };
         this.emit('status_change', this.getStatus());
@@ -411,7 +397,7 @@ class UnifiedGoogleWorker extends EventEmitter {
         } else {
           this.isConnected = false;
           this.runtimeState = { state: 'TERMINAL_WAITING', reason: cmdRes ? cmdRes.error || cmdRes.message : 'no-terminal' };
-          this.log('Terminal was not ready for typing. Will monitor on next status check.', 'warn');
+          this.log('Terminal not ready for typing. Will monitor on next status check.', 'warn');
         }
         this.emit('status_change', this.getStatus());
 
@@ -431,10 +417,10 @@ class UnifiedGoogleWorker extends EventEmitter {
           const check = await this.checkCloudShellState();
           this.lastCheckAt = Date.now();
 
-          if (check.state === 'LOGIN_REQUIRED') {
+          if (check.state === 'LOGIN_REQUIRED' || check.state === 'COOKIE_ERROR') {
             this.isConnected = false;
             this.runtimeState = check;
-            this.log('Google Login required during check.', 'warn');
+            this.log(`Google authentication required during check (${check.state}).`, 'warn');
             this.emit('status_change', this.getStatus());
             break;
           }
@@ -446,8 +432,8 @@ class UnifiedGoogleWorker extends EventEmitter {
             this.emit('status_change', this.getStatus());
 
             await this.reconnectCloudShell();
-            break; // Restart outer loop (wait 1 min -> send command)
-          } else {
+            break; // Restart outer loop
+          } else if (check.state === 'CONNECTED') {
             this.isConnected = true;
             this.runtimeState = { state: 'CONNECTED', reason: 'session-healthy' };
             this.log('🟢 Cloud Shell session is ACTIVE & healthy. (No clicks performed).', 'info');
@@ -482,7 +468,7 @@ class UnifiedGoogleWorker extends EventEmitter {
 
         if (state.state === 'LOGIN_REQUIRED') {
           this.isConnected = false;
-          this.log('Google login required for Colab. Please inject cookies via "Import Cookies".', 'warn');
+          this.log('Google login required for Colab. Please authenticate profile or import cookies.', 'warn');
           this.emit('status_change', this.getStatus());
           await this.sleep(30000);
           continue;
@@ -550,10 +536,10 @@ class UnifiedGoogleWorker extends EventEmitter {
           body.includes('adjust your privacy settings') ||
           body.includes('enable cookies')
         ) {
-          return { state: 'LOGIN_REQUIRED', reason: 'google-cookie-settings-blocked' };
+          return { state: 'COOKIE_ERROR', reason: 'google-cookie-settings-rejected' };
         }
 
-        // 2. Google Login required
+        // 2. Google Login / Sign-in required
         if (
           url.includes('accounts.google.com/signin') ||
           url.includes('accounts.google.com/ServiceLogin') ||
@@ -561,11 +547,13 @@ class UnifiedGoogleWorker extends EventEmitter {
           url.includes('accounts.google.com/AccountChooser') ||
           url.includes('accounts.google.com/v3/signin') ||
           body.includes('sign in with your google account') ||
-          body.includes('choose an account')
+          body.includes('choose an account') ||
+          body.includes('sign in to continue')
         ) {
           return { state: 'LOGIN_REQUIRED', reason: 'google-login-url' };
         }
 
+        // 3. Disconnected / Session ended
         const disconnectTerms = [
           'session terminated',
           'session disconnected',
@@ -593,18 +581,30 @@ class UnifiedGoogleWorker extends EventEmitter {
           }
         }
 
+        // 4. Authenticated & Terminal Ready
         const hasTerminal = !!document.querySelector(
-          '.xterm-screen, textarea.xterm-helper-textarea, iframe[src*="cloudshell"], iframe[src*="googleusercontent"]'
+          '.xterm-screen, textarea.xterm-helper-textarea, .terminal textarea, canvas.xterm-text-layer'
         );
         if (hasTerminal) {
           return { state: 'CONNECTED', reason: 'terminal-dom-active' };
         }
 
-        if (body.includes('cloud shell') || body.includes('terminal') || url.includes('cloudshell=true') || url.includes('shell.cloud.google.com')) {
-          return { state: 'CONNECTED', reason: 'cloudshell-page-active' };
+        const iframes = Array.from(document.querySelectorAll('iframe'));
+        for (const f of iframes) {
+          try {
+            const doc = f.contentDocument || (f.contentWindow && f.contentWindow.document);
+            if (doc && doc.querySelector('.xterm-screen, textarea.xterm-helper-textarea, .terminal textarea')) {
+              return { state: 'CONNECTED', reason: 'iframe-terminal-active' };
+            }
+          } catch (_) {}
         }
 
-        return { state: 'LOADING', reason: 'page-initializing' };
+        // 5. Initializing / Loading
+        if (url.includes('shell.cloud.google.com') || url.includes('console.cloud.google.com')) {
+          return { state: 'LOADING', reason: 'page-initializing' };
+        }
+
+        return { state: 'LOADING', reason: 'waiting-for-terminal' };
       });
     } catch (e) {
       return { state: 'UNKNOWN', reason: e.message };
@@ -872,108 +872,18 @@ class UnifiedGoogleWorker extends EventEmitter {
     }
   }
 
-  // ── Persistent Cookie Injection & Disk Backup ──
-  async _loadSavedCookiesIntoContext() {
-    if (!this.context) return;
-    try {
-      // Try environment variable first (for Vercel serverless)
-      let cookies = null;
-      if (process.env.GOOGLE_COOKIES) {
-        try {
-          cookies = JSON.parse(process.env.GOOGLE_COOKIES);
-          this.log(`Loaded ${cookies.length} cookies from environment variable.`, 'info');
-        } catch (_) {}
-      }
-
-      // Fallback to disk file
-      if (!cookies && fs.existsSync(this.savedCookiesPath)) {
-        cookies = JSON.parse(fs.readFileSync(this.savedCookiesPath, 'utf8'));
-        this.log(`Loaded ${cookies.length} cookies from disk backup.`, 'info');
-      }
-
-      if (Array.isArray(cookies) && cookies.length > 0) {
-        const formatted = this._cleanAndFormatCookies(cookies);
-        try {
-          await this.context.clearCookies();
-        } catch (_) {}
-        await this.context.addCookies(formatted);
-        this.log(`Successfully injected ${formatted.length} formatted cookies into context.`, 'info');
-        // Auto-refresh saved cookies periodically
-        this._startCookieAutoBackup();
-      }
-    } catch (e) {
-      this.log(`Note loading saved cookies: ${e.message}`, 'warn');
-    }
-  }
-
-  async _startCookieAutoBackup() {
-    // Backup cookies every 5 minutes to survive session changes
-    if (this._cookieBackupInterval) return;
-    this._cookieBackupInterval = setInterval(async () => {
-      try {
-        if (this.context) {
-          const cookies = await this.context.cookies();
-          const googleCookies = cookies.filter(c =>
-            c.domain.includes('google.com') ||
-            c.domain.includes('googleapis.com') ||
-            c.domain.includes('gstatic.com')
-          );
-          if (googleCookies.length > 0) {
-            fs.writeFileSync(this.savedCookiesPath, JSON.stringify(googleCookies, null, 2), 'utf8');
-            this.log(`Auto-backed up ${googleCookies.length} Google cookies`, 'debug');
-          }
-        }
-      } catch (e) {
-        this.log(`Cookie auto-backup error: ${e.message}`, 'warn');
-      }
-    }, 5 * 60 * 1000); // Every 5 minutes
-  }
-
+  // ── Cookie Format Helper (No Cross-Domain Cloning, Preserves Exact Origin) ──
   _cleanAndFormatCookies(raw) {
     if (!Array.isArray(raw)) return [];
+
     const mapSameSite = (v) => {
-      const s = (v || '').toLowerCase();
-      if (s === 'no_restriction' || s === 'none') return 'None';
+      if (!v) return undefined;
+      const s = String(v).toLowerCase().trim();
       if (s === 'strict') return 'Strict';
-      return 'Lax';
+      if (s === 'lax') return 'Lax';
+      if (s === 'none' || s === 'no_restriction') return 'None';
+      return undefined;
     };
-
-    const targetDomains = [
-      '.google.com',
-      '.google.co.uk',
-      '.cloud.google.com',
-      'console.cloud.google.com',
-      'shell.cloud.google.com',
-      'accounts.google.com',
-      '.googleusercontent.com',
-      'colab.research.google.com',
-    ];
-
-    const authCookieNames = new Set([
-      'SID',
-      'HSID',
-      'SSID',
-      'APISID',
-      'SAPISID',
-      '__Secure-1PSID',
-      '__Secure-3PSID',
-      '__Secure-1PAPISID',
-      '__Secure-3PAPISID',
-      '__Secure-1PSIDTS',
-      '__Secure-3PSIDTS',
-      '__Secure-1PSIDCC',
-      '__Secure-3PSIDCC',
-      '__Secure-OSID',
-      'OSID',
-      'LSID',
-      'SIDCC',
-      'NID',
-      'SOCS',
-      'CONSENT',
-      'AEC',
-      '1P_JAR',
-      '__Secure-ENID',
-    ]);
 
     const formatted = [];
     const seen = new Set();
@@ -983,58 +893,51 @@ class UnifiedGoogleWorker extends EventEmitter {
 
       const sameSite = mapSameSite(c.sameSite);
       const isNone = sameSite === 'None';
-      const isSecure = Boolean(c.secure || isNone || c.name.startsWith('__Secure-') || c.name.startsWith('__Host-'));
+      const isSecure = Boolean(
+        c.secure ||
+        isNone ||
+        c.name.startsWith('__Secure-') ||
+        c.name.startsWith('__Host-')
+      );
 
       const cookie = {
-        name: c.name,
+        name: String(c.name).trim(),
         value: String(c.value),
         path: c.path || '/',
         httpOnly: Boolean(c.httpOnly),
         secure: isSecure,
-        sameSite: sameSite,
       };
+
+      if (sameSite) {
+        cookie.sameSite = sameSite;
+      }
 
       if (c.expirationDate && c.expirationDate > 0) {
         cookie.expires = Math.floor(c.expirationDate);
       }
 
       if (c.name.startsWith('__Host-')) {
+        // __Host- cookies must not have domain attribute per RFC 6265bis
         let cleanHost = (c.domain || '').replace(/^\.+/, '');
-        if (!cleanHost || cleanHost === 'google.com') {
-          cleanHost = c.name.includes('GAPS') ? 'accounts.google.com' : 'console.cloud.google.com';
-        }
+        if (!cleanHost) cleanHost = 'google.com';
         cookie.url = `https://${cleanHost}`;
+      } else if (c.domain) {
+        cookie.domain = c.domain;
       } else {
-        cookie.domain = c.domain || '.google.com';
+        cookie.domain = '.google.com';
       }
 
-      const key = `${cookie.name}|${cookie.domain || cookie.url}|${cookie.path}`;
-      if (!seen.has(key)) {
-        seen.add(key);
+      const dedupeKey = `${cookie.name}|${cookie.domain || cookie.url}|${cookie.path}`;
+      if (!seen.has(dedupeKey)) {
+        seen.add(dedupeKey);
         formatted.push(cookie);
       }
-
-      // Replicate root and regional google session tokens to .google.com and cloud domains
-      if (
-        c.domain &&
-        c.domain.includes('google.') &&
-        !c.name.startsWith('__Host-') &&
-        authCookieNames.has(c.name)
-      ) {
-        for (const dom of targetDomains) {
-          const repCookie = { ...cookie, domain: dom };
-          delete repCookie.url;
-          const repKey = `${repCookie.name}|${repCookie.domain}|${repCookie.path}`;
-          if (!seen.has(repKey)) {
-            seen.add(repKey);
-            formatted.push(repCookie);
-          }
-        }
-      }
     }
+
     return formatted;
   }
 
+  // ── Import Cookies (Preserves Existing Session & Profile) ──
   async importCookies(input) {
     let raw = input;
     if (!Array.isArray(raw) && raw && Array.isArray(raw.cookies)) raw = raw.cookies;
@@ -1048,42 +951,39 @@ class UnifiedGoogleWorker extends EventEmitter {
       return { ok: false, error: 'No valid cookies found in payload' };
     }
 
-    // 1. Save cookies to disk backup so it survives stops, restarts, and reboots permanently
+    // 1. Save cookies to disk backup as recovery data
     try {
       fs.writeFileSync(this.savedCookiesPath, JSON.stringify(pwCookies, null, 2), 'utf8');
-      this.log(`Persisted ${pwCookies.length} formatted cookies to cookies_saved.json`, 'info');
+      this.log(`Saved ${pwCookies.length} formatted cookies to cookies_saved.json (recovery backup)`, 'info');
     } catch (e) {
       this.log(`Warning writing cookies backup: ${e.message}`, 'warn');
     }
 
-    // 2. Inject into active browser context if running
+    // 2. Inject into active browser context if running (WITHOUT clearing existing session)
     if (this.context) {
       try {
-        try {
-          await this.context.clearCookies();
-        } catch (_) {}
         await this.context.addCookies(pwCookies);
-        this.log(`Injected ${pwCookies.length} cookies into running session.`, 'info');
-
-        // Prime Google Auth session
-        try {
-          this.log('Priming Google session (accounts.google.com)...', 'info');
-          await this.page.goto('https://accounts.google.com/', { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
-          await this.sleep(2000);
-          await this.handleCloudShellDialogs();
-        } catch (_) {}
+        this.log(`Added ${pwCookies.length} cookies into active context.`, 'info');
 
         const mode = this.config.mode || 'cloudshell';
         const target = mode === 'colab' ? this.config.colabUrl : this.config.cloudShellUrl;
-        await this.page.goto(target, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
-        await this.sleep(4000);
-        await this.handleCloudShellDialogs();
-        const valid = !(this.page.url() || '').includes('accounts.google.com') &&
-          !(this.page.url() || '').includes('CookieMismatch') &&
-          !(this.page.url() || '').includes('support.google.com');
-        return { ok: true, count: pwCookies.length, appliedTo: 'running-session', valid };
+        if (this.page && !this.page.isClosed()) {
+          await this.page.goto(target, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+          await this.sleep(3000);
+          if (mode === 'cloudshell') {
+            await this.handleCloudShellDialogs();
+          } else {
+            await this.dismissColabDialogs();
+          }
+          const state = mode === 'colab' ? await this.checkColabState() : await this.checkCloudShellState();
+          this.runtimeState = state;
+          this.emit('status_change', this.getStatus());
+          return { ok: true, count: pwCookies.length, appliedTo: 'running-session', state: state.state };
+        }
+        return { ok: true, count: pwCookies.length, appliedTo: 'running-session' };
       } catch (e) {
         this.log(`addCookies failed: ${e.message}`, 'warn');
+        return { ok: false, error: e.message };
       }
     }
 
@@ -1092,43 +992,26 @@ class UnifiedGoogleWorker extends EventEmitter {
       return { ok: true, count: pwCookies.length, appliedTo: 'disk-backup' };
     }
 
-    // 4. If browser is not running on VPS, save into persistent profile folder directly
+    // 4. If browser is not running, add into persistent profile directory
     try {
-      const isLinux = process.platform === 'linux';
       const execPath = this._detectExecutablePath();
+      const isLinux = process.platform === 'linux';
       const launchOpts = {
         headless: true,
         viewport: { width: 1400, height: 900 },
         args: isLinux
-          ? [
-              '--no-sandbox',
-              '--disable-setuid-sandbox',
-              '--disable-dev-shm-usage',
-              '--disable-gpu',
-              '--disable-blink-features=AutomationControlled',
-              '--disable-features=ThirdPartyCookiePhaseout,BlockThirdPartyCookies,PrivacySandboxSettings4',
-              '--test-third-party-cookie-phaseout=disabled',
-            ]
-          : [
-              '--start-maximized',
-              '--disable-blink-features=AutomationControlled',
-              '--disable-features=ThirdPartyCookiePhaseout,BlockThirdPartyCookies,PrivacySandboxSettings4',
-              '--test-third-party-cookie-phaseout=disabled',
-            ],
+          ? ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-infobars']
+          : ['--start-maximized', '--disable-infobars'],
         ignoreDefaultArgs: ['--enable-automation'],
-        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
       };
       if (execPath) launchOpts.executablePath = execPath;
 
+      this._cleanStaleLocks();
       const tmp = await chromium.launchPersistentContext(this.userDataDir, launchOpts);
       try {
         await tmp.addCookies(pwCookies);
-        const page = tmp.pages()[0] || (await tmp.newPage());
-        await page.goto('https://shell.cloud.google.com/?show=terminal', { waitUntil: 'domcontentloaded', timeout: 35000 }).catch(() => {});
-        await this.sleep(3000);
-        const valid = !page.url().includes('accounts.google.com');
-        this.log(`Saved cookies to profile: ${valid ? 'VALID ✓' : 'SAVED'} (${pwCookies.length} cookies)`, 'info');
-        return { ok: true, count: pwCookies.length, appliedTo: 'profile-dir', valid };
+        this.log(`Imported ${pwCookies.length} cookies into persistent profile directory.`, 'info');
+        return { ok: true, count: pwCookies.length, appliedTo: 'profile-dir' };
       } finally {
         await tmp.close().catch(() => {});
       }
@@ -1151,7 +1034,7 @@ class UnifiedGoogleWorker extends EventEmitter {
 
   async stop() {
     if (!this.isRunning) return { ok: true };
-    this.log('Stopping worker (profile and cookies remain safely preserved)...', 'info');
+    this.log('Stopping worker (persistent profile preserved)...', 'info');
     this.isStopping = true;
     this.isRunning = false;
     this.isConnected = false;
@@ -1164,11 +1047,6 @@ class UnifiedGoogleWorker extends EventEmitter {
 
   async cleanup() {
     try {
-      // Clear cookie auto-backup interval
-      if (this._cookieBackupInterval) {
-        clearInterval(this._cookieBackupInterval);
-        this._cookieBackupInterval = null;
-      }
       if (this.page && !this.page.isClosed()) {
         await this.page.close().catch(() => {});
       }
