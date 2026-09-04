@@ -254,6 +254,132 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // ── Interactive Browser Control Endpoints ──
+  if (pathname === '/api/browser/navigate' && method === 'POST') {
+    try {
+      const body = await parseJsonBody(req);
+      const result = await worker.navigate(body.url);
+      sendJson(res, result.ok ? 200 : 400, result);
+    } catch (e) {
+      sendError(res, 400, e.message);
+    }
+    return;
+  }
+
+  if (pathname === '/api/browser/click' && method === 'POST') {
+    try {
+      const body = await parseJsonBody(req);
+      const result = await worker.clickCoordinate(body.x, body.y, body.width, body.height);
+      sendJson(res, result.ok ? 200 : 400, result);
+    } catch (e) {
+      sendError(res, 400, e.message);
+    }
+    return;
+  }
+
+  if (pathname === '/api/browser/type' && method === 'POST') {
+    try {
+      const body = await parseJsonBody(req);
+      const result = await worker.typeText(body.text);
+      sendJson(res, result.ok ? 200 : 400, result);
+    } catch (e) {
+      sendError(res, 400, e.message);
+    }
+    return;
+  }
+
+  if (pathname === '/api/browser/key' && method === 'POST') {
+    try {
+      const body = await parseJsonBody(req);
+      const result = await worker.pressKey(body.key);
+      sendJson(res, result.ok ? 200 : 400, result);
+    } catch (e) {
+      sendError(res, 400, e.message);
+    }
+    return;
+  }
+
+  if (pathname === '/api/browser/reload' && method === 'POST') {
+    const result = await worker.reloadPage();
+    sendJson(res, result.ok ? 200 : 400, result);
+    return;
+  }
+
+  if (pathname === '/api/browser/back' && method === 'POST') {
+    const result = await worker.goBack();
+    sendJson(res, result.ok ? 200 : 400, result);
+    return;
+  }
+
+  if (pathname === '/api/browser/forward' && method === 'POST') {
+    const result = await worker.goForward();
+    sendJson(res, result.ok ? 200 : 400, result);
+    return;
+  }
+
+  // ── Browser Remote Control Endpoints ──
+  if (pathname === '/api/browser/navigate' && method === 'POST') {
+    try {
+      const body = await parseJsonBody(req);
+      const result = await worker.navigate(body.url);
+      sendJson(res, result.ok ? 200 : 400, result);
+    } catch (e) {
+      sendError(res, 400, e.message);
+    }
+    return;
+  }
+
+  if (pathname === '/api/browser/click' && method === 'POST') {
+    try {
+      const body = await parseJsonBody(req);
+      const result = await worker.clickCoordinate(body.x, body.y, body.width, body.height);
+      sendJson(res, result.ok ? 200 : 400, result);
+    } catch (e) {
+      sendError(res, 400, e.message);
+    }
+    return;
+  }
+
+  if (pathname === '/api/browser/type' && method === 'POST') {
+    try {
+      const body = await parseJsonBody(req);
+      const result = await worker.typeText(body.text);
+      sendJson(res, result.ok ? 200 : 400, result);
+    } catch (e) {
+      sendError(res, 400, e.message);
+    }
+    return;
+  }
+
+  if (pathname === '/api/browser/key' && method === 'POST') {
+    try {
+      const body = await parseJsonBody(req);
+      const result = await worker.pressKey(body.key);
+      sendJson(res, result.ok ? 200 : 400, result);
+    } catch (e) {
+      sendError(res, 400, e.message);
+    }
+    return;
+  }
+
+  if (pathname === '/api/browser/reload' && method === 'POST') {
+    const result = await worker.reloadPage();
+    sendJson(res, result.ok ? 200 : 400, result);
+    return;
+  }
+
+  if (pathname === '/api/browser/back' && method === 'POST') {
+    const result = await worker.goBack();
+    sendJson(res, result.ok ? 200 : 400, result);
+    return;
+  }
+
+  if (pathname === '/api/browser/forward' && method === 'POST') {
+    const result = await worker.goForward();
+    sendJson(res, result.ok ? 200 : 400, result);
+    return;
+  }
+
   // ── Live Screenshot Viewport ──
   if (pathname === '/api/screenshot' && method === 'GET') {
     const buffer = await worker.takeScreenshot();

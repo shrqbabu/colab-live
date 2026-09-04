@@ -69,6 +69,16 @@
   const screenshotPlaceholder = document.getElementById('screenshotPlaceholder');
   const btnRefreshScreenshot = document.getElementById('btnRefreshScreenshot');
   const autoRefreshScreenshot = document.getElementById('autoRefreshScreenshot');
+  const clickRipple = document.getElementById('clickRipple');
+
+  // Interactive Browser Controls DOM Elements
+  const browserUrlInput = document.getElementById('browserUrlInput');
+  const btnBrowserNavigate = document.getElementById('btnBrowserNavigate');
+  const btnBrowserBack = document.getElementById('btnBrowserBack');
+  const btnBrowserForward = document.getElementById('btnBrowserForward');
+  const btnBrowserReload = document.getElementById('btnBrowserReload');
+  const browserTextInput = document.getElementById('browserTextInput');
+  const btnBrowserType = document.getElementById('btnBrowserType');
 
   const logContainer = document.getElementById('logContainer');
   const btnClearLogs = document.getElementById('btnClearLogs');
@@ -412,7 +422,7 @@
     }
   }, 1000);
 
-  // ── Screenshot Fetcher ──
+  // ── Screenshot Fetcher & Live Viewport ──
   async function fetchScreenshot() {
     try {
       const res = await apiFetch('/api/screenshot?t=' + Date.now());
@@ -428,11 +438,161 @@
 
   btnRefreshScreenshot.addEventListener('click', fetchScreenshot);
 
+  // Live auto-refresh interval (3 seconds)
   setInterval(() => {
     if (autoRefreshScreenshot && autoRefreshScreenshot.checked && isRunning) {
       fetchScreenshot();
     }
-  }, 15000);
+  }, 3000);
+
+  // ── Interactive Viewport Click Translation ──
+  if (terminalScreenshot) {
+    terminalScreenshot.addEventListener('click', async (e) => {
+      const rect = terminalScreenshot.getBoundingClientRect();
+      const clickX = e.clientX - rect.left;
+      const clickY = e.clientY - rect.top;
+      const width = rect.width;
+      const height = rect.height;
+
+      const ripple = document.getElementById('clickRipple');
+      if (ripple) {
+        ripple.style.left = `${clickX}px`;
+        ripple.style.top = `${clickY}px`;
+        ripple.classList.remove('animate');
+        void ripple.offsetWidth;
+        ripple.classList.add('animate');
+      }
+
+      appendLog({ level: 'info', msg: `🖱️ Click sent to browser at viewport (${Math.round(clickX)}, ${Math.round(clickY)})` });
+
+      try {
+        await apiJson('/api/browser/click', {
+          method: 'POST',
+          body: JSON.stringify({ x: clickX, y: clickY, width, height }),
+        });
+        setTimeout(fetchScreenshot, 500);
+      } catch (err) {
+        console.warn('Browser click error:', err.message);
+      }
+    });
+  }
+
+  // ── Browser Navigation Controls (URL Bar, Back, Forward, Reload) ──
+  const browserUrlInput = document.getElementById('browserUrlInput');
+  const btnBrowserNavigate = document.getElementById('btnBrowserNavigate');
+  const btnBrowserBack = document.getElementById('btnBrowserBack');
+  const btnBrowserForward = document.getElementById('btnBrowserForward');
+  const btnBrowserReload = document.getElementById('btnBrowserReload');
+
+  async function navigateBrowser(url) {
+    const targetUrl = (url || (browserUrlInput ? browserUrlInput.value : '')).trim();
+    if (!targetUrl) return;
+    appendLog({ level: 'info', msg: `🌐 Navigating browser to: ${targetUrl}...` });
+    try {
+      const res = await apiJson('/api/browser/navigate', {
+        method: 'POST',
+        body: JSON.stringify({ url: targetUrl }),
+      });
+      if (res && res.ok) {
+        setTimeout(fetchScreenshot, 1500);
+      } else {
+        alert('Navigation failed: ' + (res ? (res.message || res.error) : 'Unknown error'));
+      }
+    } catch (e) {
+      alert('Navigate error: ' + e.message);
+    }
+  }
+
+  if (btnBrowserNavigate) {
+    btnBrowserNavigate.addEventListener('click', () => navigateBrowser());
+  }
+  if (browserUrlInput) {
+    browserUrlInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') navigateBrowser();
+    });
+  }
+
+  if (btnBrowserBack) {
+    btnBrowserBack.addEventListener('click', async () => {
+      appendLog({ level: 'info', msg: 'Navigating Back ◀' });
+      try {
+        await apiJson('/api/browser/back', { method: 'POST' });
+        setTimeout(fetchScreenshot, 1000);
+      } catch (_) {}
+    });
+  }
+
+  if (btnBrowserForward) {
+    btnBrowserForward.addEventListener('click', async () => {
+      appendLog({ level: 'info', msg: 'Navigating Forward ▶' });
+      try {
+        await apiJson('/api/browser/forward', { method: 'POST' });
+        setTimeout(fetchScreenshot, 1000);
+      } catch (_) {}
+    });
+  }
+
+  if (btnBrowserReload) {
+    btnBrowserReload.addEventListener('click', async () => {
+      appendLog({ level: 'info', msg: 'Reloading browser page 🔄' });
+      try {
+        await apiJson('/api/browser/reload', { method: 'POST' });
+        setTimeout(fetchScreenshot, 1500);
+      } catch (_) {}
+    });
+  }
+
+  // ── Remote Keyboard & Key Controls ──
+  const browserTextInput = document.getElementById('browserTextInput');
+  const btnBrowserType = document.getElementById('btnBrowserType');
+
+  async function typeTextToBrowser(text) {
+    const val = text !== undefined ? text : (browserTextInput ? browserTextInput.value : '');
+    if (!val) return;
+    appendLog({ level: 'info', msg: `⌨️ Typing text into browser: "${val}"` });
+    try {
+      await apiJson('/api/browser/type', {
+        method: 'POST',
+        body: JSON.stringify({ text: val }),
+      });
+      if (browserTextInput) browserTextInput.value = '';
+      setTimeout(fetchScreenshot, 400);
+    } catch (e) {
+      alert('Type error: ' + e.message);
+    }
+  }
+
+  async function pressBrowserKey(key) {
+    if (!key) return;
+    appendLog({ level: 'info', msg: `⌨️ Key press: [${key}]` });
+    try {
+      await apiJson('/api/browser/key', {
+        method: 'POST',
+        body: JSON.stringify({ key }),
+      });
+      setTimeout(fetchScreenshot, 400);
+    } catch (e) {
+      console.warn('Key error:', e.message);
+    }
+  }
+
+  if (btnBrowserType) {
+    btnBrowserType.addEventListener('click', () => typeTextToBrowser());
+  }
+  if (browserTextInput) {
+    browserTextInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        typeTextToBrowser();
+      }
+    });
+  }
+
+  document.querySelectorAll('.key-chip').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const key = btn.getAttribute('data-key');
+      pressBrowserKey(key);
+    });
+  });
 
   // ── Mode Switch Actions ──
   btnModeCloudshell.addEventListener('click', async () => {

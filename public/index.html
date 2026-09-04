@@ -209,33 +209,73 @@
         </div>
       </section>
 
-      <!-- 3. Live Screen Snapshot Card -->
+      <!-- 3. Live Screen Snapshot & Remote Control Card -->
       <section class="card screenshot-card">
         <div class="card-header">
           <div class="header-title-group">
             <span class="card-icon">🖥️</span>
             <div>
-              <h2>Live Workspace Snapshot</h2>
-              <p class="card-sub">Real-time Playwright viewport render</p>
+              <h2>Live Viewport &amp; Browser Remote Control</h2>
+              <p class="card-sub">Interactive screen, direct URL navigation &amp; remote keyboard</p>
             </div>
           </div>
           <div class="header-tools">
-            <button id="btnRefreshScreenshot" class="btn btn-sm btn-secondary">
+            <button id="btnRefreshScreenshot" class="btn btn-sm btn-secondary" title="Capture current frame">
               <span>🔄</span> Refresh
             </button>
-            <label class="toggle-label">
+            <label class="toggle-label" title="Stream live viewport updates">
               <input type="checkbox" id="autoRefreshScreenshot" checked>
               <span class="toggle-custom"></span>
-              Auto (15s)
+              Auto (3s)
             </label>
           </div>
         </div>
-        <div class="screenshot-wrapper" id="screenshotWrapper">
-          <img id="terminalScreenshot" src="" alt="Live View" class="screenshot-img" style="display:none;">
+
+        <!-- Browser Remote Navigation Bar -->
+        <div class="browser-nav-bar">
+          <div class="browser-nav-btns">
+            <button id="btnBrowserBack" class="btn-icon" title="Go Back">◀</button>
+            <button id="btnBrowserForward" class="btn-icon" title="Go Forward">▶</button>
+            <button id="btnBrowserReload" class="btn-icon" title="Reload Page">🔄</button>
+          </div>
+          <div class="browser-url-bar">
+            <span class="url-lock-icon">🔒</span>
+            <input type="text" id="browserUrlInput" class="browser-url-input font-mono" placeholder="https://shell.cloud.google.com/?show=terminal" value="https://shell.cloud.google.com/?show=terminal">
+            <button id="btnBrowserNavigate" class="btn btn-sm btn-primary">➔ Go</button>
+          </div>
+        </div>
+
+        <div class="screenshot-wrapper" id="screenshotWrapper" title="Click anywhere to click that point on the browser">
+          <img id="terminalScreenshot" src="" alt="Live View" class="screenshot-img interactive-canvas" style="display:none;">
+          <div id="clickRipple" class="click-ripple"></div>
           <div id="screenshotPlaceholder" class="screenshot-placeholder">
             <div class="placeholder-icon">🖥️</div>
             <p class="placeholder-text">No active viewport capture</p>
             <span class="placeholder-sub">Click "Start Session" to spin up the browser instance</span>
+          </div>
+        </div>
+
+        <div class="viewport-hint">
+          <span>💡 Click anywhere on the screen above to click inside the live browser</span>
+        </div>
+
+        <!-- Remote Keyboard & Text Input -->
+        <div class="browser-input-controls">
+          <div class="browser-type-group">
+            <input type="text" id="browserTextInput" class="input-field font-mono browser-text-input" placeholder="Type text, password, or code to send...">
+            <button id="btnBrowserType" class="btn btn-sm btn-primary">
+              <span>⌨️ Type Text</span>
+            </button>
+          </div>
+          <div class="browser-quick-keys">
+            <span class="quick-label">Keys:</span>
+            <button class="key-chip" data-key="Enter">↵ Enter</button>
+            <button class="key-chip" data-key="Tab">⇥ Tab</button>
+            <button class="key-chip" data-key="Backspace">⌫ Backspace</button>
+            <button class="key-chip" data-key="Escape">Esc</button>
+            <button class="key-chip" data-key="Space">Space</button>
+            <button class="key-chip" data-key="ArrowDown">↓ Down</button>
+            <button class="key-chip" data-key="ArrowUp">↑ Up</button>
           </div>
         </div>
       </section>

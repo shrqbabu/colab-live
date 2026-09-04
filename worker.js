@@ -845,6 +845,116 @@ class UnifiedGoogleWorker extends EventEmitter {
     }
   }
 
+  // ── Browser Interactive Controls (Remote Viewport & Control) ──
+  async navigate(url) {
+    if (!this.page || this.page.isClosed()) {
+      return { ok: false, message: 'Browser session is not active. Please start session first.' };
+    }
+    const target = (url || '').trim();
+    if (!target) return { ok: false, message: 'Valid URL is required' };
+    this.log(`Interactive navigation to: ${target}`, 'info');
+    try {
+      await this.page.goto(target, { waitUntil: 'domcontentloaded', timeout: 60000 });
+      await this.sleep(1500);
+      try {
+        this.pageTitle = (await this.page.title()) || this.pageTitle;
+      } catch (_) {}
+      this.emit('status_change', this.getStatus());
+      return { ok: true, url: this.page.url(), title: this.pageTitle };
+    } catch (e) {
+      this.log(`Navigation error: ${e.message}`, 'error');
+      return { ok: false, error: e.message };
+    }
+  }
+
+  async clickCoordinate(x, y, clientWidth, clientHeight) {
+    if (!this.page || this.page.isClosed()) {
+      return { ok: false, message: 'Browser session is not active' };
+    }
+    try {
+      let realX = Number(x);
+      let realY = Number(y);
+      if (clientWidth && clientHeight && clientWidth > 0 && clientHeight > 0) {
+        const scaleX = 1400 / Number(clientWidth);
+        const scaleY = 900 / Number(clientHeight);
+        realX = Math.round(realX * scaleX);
+        realY = Math.round(realY * scaleY);
+      }
+      this.log(`Viewport click at (${realX}, ${realY})`, 'info');
+      await this.page.mouse.click(realX, realY);
+      await this.sleep(400);
+      return { ok: true, x: realX, y: realY };
+    } catch (e) {
+      this.log(`Click error: ${e.message}`, 'error');
+      return { ok: false, error: e.message };
+    }
+  }
+
+  async typeText(text) {
+    if (!this.page || this.page.isClosed()) {
+      return { ok: false, message: 'Browser session is not active' };
+    }
+    try {
+      const str = String(text || '');
+      this.log(`Typing ${str.length} characters into active browser element...`, 'info');
+      await this.page.keyboard.type(str, { delay: 35 });
+      await this.sleep(300);
+      return { ok: true, length: str.length };
+    } catch (e) {
+      this.log(`Type error: ${e.message}`, 'error');
+      return { ok: false, error: e.message };
+    }
+  }
+
+  async pressKey(key) {
+    if (!this.page || this.page.isClosed()) {
+      return { ok: false, message: 'Browser session is not active' };
+    }
+    try {
+      const validKey = String(key || 'Enter').trim();
+      this.log(`Keyboard key press: ${validKey}`, 'info');
+      await this.page.keyboard.press(validKey);
+      await this.sleep(350);
+      return { ok: true, key: validKey };
+    } catch (e) {
+      this.log(`Key press error: ${e.message}`, 'error');
+      return { ok: false, error: e.message };
+    }
+  }
+
+  async goBack() {
+    if (!this.page || this.page.isClosed()) return { ok: false, message: 'Browser session is not active' };
+    try {
+      await this.page.goBack({ waitUntil: 'domcontentloaded', timeout: 30000 });
+      await this.sleep(1000);
+      return { ok: true, url: this.page.url() };
+    } catch (e) {
+      return { ok: false, error: e.message };
+    }
+  }
+
+  async goForward() {
+    if (!this.page || this.page.isClosed()) return { ok: false, message: 'Browser session is not active' };
+    try {
+      await this.page.goForward({ waitUntil: 'domcontentloaded', timeout: 30000 });
+      await this.sleep(1000);
+      return { ok: true, url: this.page.url() };
+    } catch (e) {
+      return { ok: false, error: e.message };
+    }
+  }
+
+  async reloadPage() {
+    if (!this.page || this.page.isClosed()) return { ok: false, message: 'Browser session is not active' };
+    try {
+      await this.page.reload({ waitUntil: 'domcontentloaded', timeout: 30000 });
+      await this.sleep(1500);
+      return { ok: true, url: this.page.url() };
+    } catch (e) {
+      return { ok: false, error: e.message };
+    }
+  }
+
   // ── Force Reconnect ──
   async forceReconnect() {
     if (this._reconnectLock) return { ok: false, message: 'Reconnect in progress' };
