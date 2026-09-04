@@ -304,6 +304,13 @@ class UnifiedGoogleWorker extends EventEmitter {
         }).catch(() => {});
         await this.sleep(2000);
         await this.handleCloudShellDialogs();
+
+        const primedUrl = this.page.url() || '';
+        if (primedUrl.includes('myaccount.google.com')) {
+          this.log('Google session verified: Logged in ✓', 'info');
+        } else if (primedUrl.includes('signin') || primedUrl.includes('ServiceLogin') || primedUrl.includes('identifier')) {
+          this.log('Google session: Not authenticated (fresh cookies required from console.cloud.google.com)', 'warn');
+        }
       } catch (_) {}
 
       this.log(`Navigating to ${targetUrl}...`, 'info');
