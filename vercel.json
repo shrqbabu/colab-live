@@ -1,19 +1,9 @@
 {
   "version": 2,
   "name": "cloudshell-colab-manager",
-  "rewrites": [
-    {
-      "source": "/api/(.*)",
-      "destination": "/index.js?__path=/api/$1"
-    },
-    {
-      "source": "/(.*)",
-      "destination": "/index.js?__path=/$1"
-    }
-  ],
   "headers": [
     {
-      "source": "/(.*)",
+      "source": "/api/(.*)",
       "headers": [
         { "key": "Access-Control-Allow-Credentials", "value": "true" },
         { "key": "Access-Control-Allow-Origin", "value": "*" },

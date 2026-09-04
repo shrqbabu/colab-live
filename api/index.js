@@ -1,9 +1,12 @@
 // ============================================================
-//  ⚡ Vercel Serverless Route Handler — Forward to Unified index.js
+//  ⚡ Vercel Serverless Health Check
 // ============================================================
 
-const rootHandler = require('../index.js');
-
-module.exports = function handler(req, res) {
-  return rootHandler(req, res);
+module.exports = (req, res) => {
+  res.status(200).json({
+    ok: true,
+    service: 'cloudshell-colab-vercel-gateway',
+    status: 'online',
+    timestamp: Date.now()
+  });
 };
