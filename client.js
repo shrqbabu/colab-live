@@ -15,8 +15,13 @@
   // Auth State
   let authToken = localStorage.getItem('google_auth_token') || null;
 
-  // VPS Connection Config
-  let customVpsUrl = (localStorage.getItem('google_vps_url') || localStorage.getItem('colab_vps_url') || '').trim();
+  // VPS Connection Config (Defaults to Oracle VPS 8080 when running on Vercel)
+  const isDirectHost = window.location.hostname === 'localhost' || /^\d+\.\d+\.\d+\.\d+$/.test(window.location.hostname);
+  let customVpsUrl = (
+    localStorage.getItem('google_vps_url') ||
+    localStorage.getItem('colab_vps_url') ||
+    (isDirectHost ? '' : 'http://68.233.113.7:8080')
+  ).trim();
   let customVpsSecret = (localStorage.getItem('google_vps_secret') || '').trim();
 
   // Auth DOM Elements

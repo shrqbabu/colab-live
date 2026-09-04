@@ -136,8 +136,12 @@ module.exports = async function handler(req, res) {
     return res.end();
   }
 
-  // 1. Determine Oracle VPS URL from Header or Environment
-  const rawVpsUrl = req.headers['x-vps-url'] || process.env.VPS_URL || process.env.ORACLE_VPS_URL;
+  // 1. Determine Oracle VPS URL from Header, Environment, or Default VPS IP
+  const rawVpsUrl =
+    req.headers['x-vps-url'] ||
+    process.env.VPS_URL ||
+    process.env.ORACLE_VPS_URL ||
+    'http://68.233.113.7:8080';
   const vpsUrl = parseVpsUrl(rawVpsUrl);
 
   // 2. Resolve Path from Vercel dynamic catch-all route (req.query.path) or req.url

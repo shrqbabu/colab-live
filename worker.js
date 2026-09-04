@@ -241,6 +241,7 @@ class UnifiedGoogleWorker extends EventEmitter {
         '--disable-setuid-sandbox',
         '--disable-dev-shm-usage',
         '--disable-infobars',
+        '--disable-blink-features=AutomationControlled',
         '--window-size=1400,900',
         '--lang=en-US,en',
       ];
@@ -249,11 +250,16 @@ class UnifiedGoogleWorker extends EventEmitter {
       }
 
       const executablePath = this._detectExecutablePath();
+      const standardUserAgent = isLinux
+        ? 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36'
+        : 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
+
       const launchOpts = {
         headless: isHeadless,
         viewport: { width: 1400, height: 900 },
         args: launchArgs,
         ignoreDefaultArgs: ['--enable-automation'],
+        userAgent: standardUserAgent,
       };
       if (executablePath) {
         launchOpts.executablePath = executablePath;
