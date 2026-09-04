@@ -438,52 +438,75 @@
 
   btnRefreshScreenshot.addEventListener('click', fetchScreenshot);
 
-  // Live auto-refresh interval (3 seconds)
+  // Live auto-refresh interval (2.5 seconds)
   setInterval(() => {
-    if (autoRefreshScreenshot && autoRefreshScreenshot.checked && isRunning) {
+    if (autoRefreshScreenshot && autoRefreshScreenshot.checked) {
       fetchScreenshot();
     }
-  }, 3000);
+  }, 2500);
 
   // ── Interactive Viewport Click Translation ──
   if (terminalScreenshot) {
     terminalScreenshot.addEventListener('click', async (e) => {
       const rect = terminalScreenshot.getBoundingClientRect();
-      const clickX = e.clientX - rect.left;
-      const clickY = e.clientY - rect.top;
-      const width = rect.width;
-      const height = rect.height;
+      const natW = terminalScreenshot.naturalWidth || 1400;
+      const natH = terminalScreenshot.naturalHeight || 900;
+
+      const elemW = rect.width;
+      const elemH = rect.height;
+      const elemRatio = elemW / elemH;
+      const imgRatio = natW / natH;
+
+      let renderW = elemW;
+      let renderH = elemH;
+      let offsetX = 0;
+      let offsetY = 0;
+
+      if (elemRatio > imgRatio) {
+        renderH = elemH;
+        renderW = elemH * imgRatio;
+        offsetX = (elemW - renderW) / 2;
+      } else {
+        renderW = elemW;
+        renderH = elemW / imgRatio;
+        offsetY = (elemH - renderH) / 2;
+      }
+
+      const clickX = e.clientX - rect.left - offsetX;
+      const clickY = e.clientY - rect.top - offsetY;
 
       const ripple = document.getElementById('clickRipple');
       if (ripple) {
-        ripple.style.left = `${clickX}px`;
-        ripple.style.top = `${clickY}px`;
+        ripple.style.left = `${e.clientX - rect.left}px`;
+        ripple.style.top = `${e.clientY - rect.top}px`;
         ripple.classList.remove('animate');
         void ripple.offsetWidth;
         ripple.classList.add('animate');
       }
 
-      appendLog({ level: 'info', msg: `🖱️ Click sent to browser at viewport (${Math.round(clickX)}, ${Math.round(clickY)})` });
+      if (clickX >= 0 && clickX <= renderW && clickY >= 0 && clickY <= renderH) {
+        const scaleX = natW / renderW;
+        const scaleY = natH / renderH;
+        const pageX = Math.round(clickX * scaleX);
+        const pageY = Math.round(clickY * scaleY);
 
-      try {
-        await apiJson('/api/browser/click', {
-          method: 'POST',
-          body: JSON.stringify({ x: clickX, y: clickY, width, height }),
-        });
-        setTimeout(fetchScreenshot, 500);
-      } catch (err) {
-        console.warn('Browser click error:', err.message);
+        appendLog({ level: 'info', msg: `🖱️ Viewport Click sent to (${pageX}, ${pageY})` });
+
+        try {
+          await apiJson('/api/browser/click', {
+            method: 'POST',
+            body: JSON.stringify({ x: pageX, y: pageY, width: natW, height: natH }),
+          });
+          setTimeout(fetchScreenshot, 400);
+          setTimeout(fetchScreenshot, 1200);
+        } catch (err) {
+          console.warn('Browser click error:', err.message);
+        }
       }
     });
   }
 
   // ── Browser Navigation Controls (URL Bar, Back, Forward, Reload) ──
-  const browserUrlInput = document.getElementById('browserUrlInput');
-  const btnBrowserNavigate = document.getElementById('btnBrowserNavigate');
-  const btnBrowserBack = document.getElementById('btnBrowserBack');
-  const btnBrowserForward = document.getElementById('btnBrowserForward');
-  const btnBrowserReload = document.getElementById('btnBrowserReload');
-
   async function navigateBrowser(url) {
     const targetUrl = (url || (browserUrlInput ? browserUrlInput.value : '')).trim();
     if (!targetUrl) return;
@@ -494,7 +517,9 @@
         body: JSON.stringify({ url: targetUrl }),
       });
       if (res && res.ok) {
-        setTimeout(fetchScreenshot, 1500);
+        setTimeout(fetchScreenshot, 800);
+        setTimeout(fetchScreenshot, 2000);
+        setTimeout(fetchScreenshot, 4000);
       } else {
         alert('Navigation failed: ' + (res ? (res.message || res.error) : 'Unknown error'));
       }
@@ -517,7 +542,7 @@
       appendLog({ level: 'info', msg: 'Navigating Back ◀' });
       try {
         await apiJson('/api/browser/back', { method: 'POST' });
-        setTimeout(fetchScreenshot, 1000);
+        setTimeout(fetchScreenshot, 800);
       } catch (_) {}
     });
   }
@@ -527,7 +552,7 @@
       appendLog({ level: 'info', msg: 'Navigating Forward ▶' });
       try {
         await apiJson('/api/browser/forward', { method: 'POST' });
-        setTimeout(fetchScreenshot, 1000);
+        setTimeout(fetchScreenshot, 800);
       } catch (_) {}
     });
   }
@@ -537,19 +562,16 @@
       appendLog({ level: 'info', msg: 'Reloading browser page 🔄' });
       try {
         await apiJson('/api/browser/reload', { method: 'POST' });
-        setTimeout(fetchScreenshot, 1500);
+        setTimeout(fetchScreenshot, 1200);
       } catch (_) {}
     });
   }
 
   // ── Remote Keyboard & Key Controls ──
-  const browserTextInput = document.getElementById('browserTextInput');
-  const btnBrowserType = document.getElementById('btnBrowserType');
-
   async function typeTextToBrowser(text) {
     const val = text !== undefined ? text : (browserTextInput ? browserTextInput.value : '');
     if (!val) return;
-    appendLog({ level: 'info', msg: `⌨️ Typing text into browser: "${val}"` });
+    appendLog({ level: 'info', msg: `⌨️ Typing into browser: "${val}"` });
     try {
       await apiJson('/api/browser/type', {
         method: 'POST',
@@ -557,6 +579,7 @@
       });
       if (browserTextInput) browserTextInput.value = '';
       setTimeout(fetchScreenshot, 400);
+      setTimeout(fetchScreenshot, 1000);
     } catch (e) {
       alert('Type error: ' + e.message);
     }
@@ -571,6 +594,7 @@
         body: JSON.stringify({ key }),
       });
       setTimeout(fetchScreenshot, 400);
+      setTimeout(fetchScreenshot, 1000);
     } catch (e) {
       console.warn('Key error:', e.message);
     }

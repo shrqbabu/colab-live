@@ -847,15 +847,28 @@ class UnifiedGoogleWorker extends EventEmitter {
 
   // ── Browser Interactive Controls (Remote Viewport & Control) ──
   async navigate(url) {
-    if (!this.page || this.page.isClosed()) {
-      return { ok: false, message: 'Browser session is not active. Please start session first.' };
-    }
     const target = (url || '').trim();
     if (!target) return { ok: false, message: 'Valid URL is required' };
+
+    if (!this.isRunning || !this.page || this.page.isClosed()) {
+      this.config.cloudShellUrl = target;
+      if (this.config.mode === 'colab') this.config.colabUrl = target;
+      this.saveConfig(this.config);
+      this.log(`Browser not running — launching persistent browser to: ${target}`, 'info');
+      const startRes = await this.start();
+      if (!startRes.ok) return startRes;
+      return { ok: true, url: target, title: this.pageTitle, started: true };
+    }
+
     this.log(`Interactive navigation to: ${target}`, 'info');
     try {
       await this.page.goto(target, { waitUntil: 'domcontentloaded', timeout: 60000 });
-      await this.sleep(1500);
+      await this.sleep(2000);
+      if (this.config.mode === 'cloudshell') {
+        await this.handleCloudShellDialogs();
+      } else {
+        await this.dismissColabDialogs();
+      }
       try {
         this.pageTitle = (await this.page.title()) || this.pageTitle;
       } catch (_) {}
@@ -869,7 +882,7 @@ class UnifiedGoogleWorker extends EventEmitter {
 
   async clickCoordinate(x, y, clientWidth, clientHeight) {
     if (!this.page || this.page.isClosed()) {
-      return { ok: false, message: 'Browser session is not active' };
+      return { ok: false, message: 'Browser session is not active. Click Start Session first.' };
     }
     try {
       let realX = Number(x);
@@ -880,9 +893,11 @@ class UnifiedGoogleWorker extends EventEmitter {
         realX = Math.round(realX * scaleX);
         realY = Math.round(realY * scaleY);
       }
+      realX = Math.max(0, Math.min(1400, realX));
+      realY = Math.max(0, Math.min(900, realY));
       this.log(`Viewport click at (${realX}, ${realY})`, 'info');
       await this.page.mouse.click(realX, realY);
-      await this.sleep(400);
+      await this.sleep(300);
       return { ok: true, x: realX, y: realY };
     } catch (e) {
       this.log(`Click error: ${e.message}`, 'error');
@@ -892,7 +907,7 @@ class UnifiedGoogleWorker extends EventEmitter {
 
   async typeText(text) {
     if (!this.page || this.page.isClosed()) {
-      return { ok: false, message: 'Browser session is not active' };
+      return { ok: false, message: 'Browser session is not active. Click Start Session first.' };
     }
     try {
       const str = String(text || '');
@@ -908,13 +923,17 @@ class UnifiedGoogleWorker extends EventEmitter {
 
   async pressKey(key) {
     if (!this.page || this.page.isClosed()) {
-      return { ok: false, message: 'Browser session is not active' };
+      return { ok: false, message: 'Browser session is not active. Click Start Session first.' };
     }
     try {
       const validKey = String(key || 'Enter').trim();
       this.log(`Keyboard key press: ${validKey}`, 'info');
-      await this.page.keyboard.press(validKey);
-      await this.sleep(350);
+      if (validKey.toLowerCase() === 'ctrl+c' || validKey.toLowerCase() === 'control+c') {
+        await this.page.keyboard.press('Control+c');
+      } else {
+        await this.page.keyboard.press(validKey);
+      }
+      await this.sleep(300);
       return { ok: true, key: validKey };
     } catch (e) {
       this.log(`Key press error: ${e.message}`, 'error');
@@ -1141,13 +1160,15 @@ class UnifiedGoogleWorker extends EventEmitter {
   }
 
   async takeScreenshot() {
-    if (!this.page || this.page.isClosed()) return null;
+    if (!this.page || this.page.isClosed()) {
+      return this.latestScreenshot || null;
+    }
     try {
-      const buffer = await this.page.screenshot({ type: 'png' });
-      this.latestScreenshot = buffer;
-      return buffer;
+      const buffer = await this.page.screenshot({ type: 'png', timeout: 5000 });
+      if (buffer) this.latestScreenshot = buffer;
+      return buffer || this.latestScreenshot || null;
     } catch (e) {
-      return null;
+      return this.latestScreenshot || null;
     }
   }
 
