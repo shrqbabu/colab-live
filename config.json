@@ -7,7 +7,7 @@
   "checkIntervalMin": 10,
   "colabKeepaliveSec": 60,
   "colabAutoRun": true,
-  "port": 80,
+  "port": 8080,
   "headless": true,
   "autoStart": false,
   "auth": {

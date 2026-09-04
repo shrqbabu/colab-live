@@ -9,12 +9,10 @@ const crypto = require('crypto');
 const UnifiedGoogleWorker = require('./worker');
 
 const CONFIG_PATH = path.join(__dirname, 'config.json');
-const PUBLIC_DIR = __dirname;
 
 const worker = new UnifiedGoogleWorker(CONFIG_PATH);
 
 // In-Memory state
-const activeSessions = new Set();
 const logBuffer = [];
 const MAX_LOGS = 350;
 const sseClients = new Set();
@@ -66,12 +64,13 @@ function parseJsonBody(req) {
 }
 
 function sendJson(res, statusCode, data, extraHeaders = {}) {
+  if (res.headersSent) return;
   res.writeHead(statusCode, {
     'Content-Type': 'application/json; charset=utf-8',
     'Cache-Control': 'no-cache, no-store',
     'X-Content-Type-Options': 'nosniff',
     'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-API-Secret',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-API-Secret, X-VPS-URL, X-VPS-Key, X-Requested-With',
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS, PUT, DELETE',
     ...extraHeaders,
   });
@@ -93,7 +92,15 @@ const MIME_TYPES = {
   '.ico': 'image/x-icon',
 };
 
-function serveStatic(req, res, filePath) {
+function serveStatic(req, res, filename) {
+  let filePath = path.join(__dirname, filename);
+  if (!fs.existsSync(filePath)) {
+    filePath = path.join(__dirname, 'public', filename);
+  }
+  if (!fs.existsSync(filePath)) {
+    filePath = path.join(__dirname, 'index.html');
+  }
+
   const ext = path.extname(filePath).toLowerCase();
   const contentType = MIME_TYPES[ext] || 'application/octet-stream';
 
@@ -105,28 +112,50 @@ function serveStatic(req, res, filePath) {
     res.writeHead(200, {
       'Content-Type': contentType,
       'Cache-Control': 'no-cache',
+      'Access-Control-Allow-Origin': '*',
     });
     res.end(data);
   });
 }
 
 const server = http.createServer(async (req, res) => {
+  // CORS
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-API-Secret, X-VPS-URL, X-VPS-Key, X-Requested-With');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PUT, DELETE');
+
   const urlObj = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
   const pathname = urlObj.pathname;
   const method = req.method.toUpperCase();
 
   if (method === 'OPTIONS') {
-    res.writeHead(204, {
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-API-Secret',
-      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS, PUT, DELETE',
-    });
+    res.writeHead(204);
     res.end();
     return;
   }
 
-  // SSE Stream
-  if (pathname === '/api/events') {
+  // ── Health Check (for VPS Gateway & Vercel) ──
+  if (pathname === '/api/health' || pathname === '/health') {
+    sendJson(res, 200, {
+      ok: true,
+      service: 'google-automation-manager-vps',
+      isRunning: worker.isRunning,
+      uptimeSec: Math.floor(process.uptime()),
+      mode: worker.config.mode || 'cloudshell',
+      port: PORT,
+      timestamp: Date.now(),
+    });
+    return;
+  }
+
+  // ── Status check ──
+  if ((pathname === '/api/status' || pathname === '/status') && method === 'GET') {
+    sendJson(res, 200, { ok: true, ...worker.getStatus() });
+    return;
+  }
+
+  // ── SSE Stream ──
+  if (pathname === '/api/events' || pathname === '/events') {
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
@@ -142,31 +171,39 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // Status check
-  if (pathname === '/api/status' && method === 'GET') {
-    sendJson(res, 200, { ok: true, ...worker.getStatus() });
-    return;
-  }
-
-  // Worker controls
-  if (pathname === '/api/start' && method === 'POST') {
+  // ── Worker controls ──
+  if ((pathname === '/api/start' || pathname === '/api/worker/start') && method === 'POST') {
     const result = await worker.start();
     sendJson(res, result.ok ? 200 : 500, result);
     return;
   }
 
-  if (pathname === '/api/stop' && method === 'POST') {
+  if ((pathname === '/api/stop' || pathname === '/api/worker/stop') && method === 'POST') {
     const result = await worker.stop();
     sendJson(res, 200, result);
     return;
   }
 
-  if (pathname === '/api/reconnect' && method === 'POST') {
+  if ((pathname === '/api/restart' || pathname === '/api/worker/restart') && method === 'POST') {
+    await worker.stop();
+    setTimeout(() => worker.start(), 1000);
+    sendJson(res, 200, { ok: true });
+    return;
+  }
+
+  if ((pathname === '/api/reconnect' || pathname === '/api/worker/reconnect') && method === 'POST') {
     const result = await worker.forceReconnect();
+    sendJson(res, 200, result);
+    return;
+  }
+
+  if ((pathname === '/api/run-all' || pathname === '/api/worker/run-all') && method === 'POST') {
+    const result = await worker.triggerColabRunAll();
     sendJson(res, result.ok ? 200 : 500, result);
     return;
   }
 
+  // ── Remote Command Execution ──
   if (pathname === '/api/send-command' && method === 'POST') {
     try {
       const body = await parseJsonBody(req);
@@ -179,12 +216,14 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // ── Live Screenshot Viewport ──
   if (pathname === '/api/screenshot' && method === 'GET') {
     const buffer = await worker.takeScreenshot();
     if (buffer) {
       res.writeHead(200, {
         'Content-Type': 'image/png',
         'Cache-Control': 'no-cache, no-store',
+        'Access-Control-Allow-Origin': '*',
       });
       res.end(buffer);
     } else {
@@ -193,13 +232,20 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // ── Logs ──
   if (pathname === '/api/logs' && method === 'GET') {
     sendJson(res, 200, { ok: true, logs: logBuffer });
     return;
   }
 
-  // Import cookies & persist to profile
-  if (pathname === '/api/cookies' && method === 'POST') {
+  if (pathname === '/api/logs/clear' && method === 'POST') {
+    logBuffer.length = 0;
+    sendJson(res, 200, { ok: true });
+    return;
+  }
+
+  // ── Import Cookies & Profile ──
+  if ((pathname === '/api/cookies' || pathname === '/api/cookies/import') && method === 'POST') {
     try {
       const body = await parseJsonBody(req);
       const result = await worker.importCookies(body);
@@ -210,7 +256,7 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // Get & Update Config
+  // ── Get & Update Config ──
   if (pathname === '/api/config' && method === 'GET') {
     const conf = worker.loadConfig();
     sendJson(res, 200, { ok: true, config: conf });
@@ -228,17 +274,17 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // Static File Serving
+  // ── Static Files (HTML / CSS / JS) ──
   if (pathname === '/' || pathname === '/index.html') {
-    serveStatic(req, res, path.join(PUBLIC_DIR, 'index.html'));
+    serveStatic(req, res, 'index.html');
     return;
   }
   if (pathname === '/style.css') {
-    serveStatic(req, res, path.join(PUBLIC_DIR, 'style.css'));
+    serveStatic(req, res, 'style.css');
     return;
   }
   if (pathname === '/client.js') {
-    serveStatic(req, res, path.join(PUBLIC_DIR, 'client.js'));
+    serveStatic(req, res, 'client.js');
     return;
   }
 
@@ -246,7 +292,7 @@ const server = http.createServer(async (req, res) => {
 });
 
 const config = worker.loadConfig();
-const PORT = parseInt(process.env.PORT || config.port || '80', 10);
+const PORT = parseInt(process.env.PORT || config.port || '8080', 10);
 
 server.listen(PORT, '0.0.0.0', () => {
   console.log('========================================================');
