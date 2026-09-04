@@ -4,6 +4,8 @@ profile/
 pm2_out.log
 pm2_err.log
 cookies.json
+cookies_saved.json
+cookies*.json
 .env
 .DS_Store
 Thumbs.db
