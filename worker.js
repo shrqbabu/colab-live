@@ -215,6 +215,8 @@ class UnifiedGoogleWorker extends EventEmitter {
         '--disable-infobars',
         '--window-size=1400,900',
         '--lang=en-US,en',
+        '--disable-features=ThirdPartyCookiePhaseout,BlockThirdPartyCookies,PrivacySandboxSettings4',
+        '--test-third-party-cookie-phaseout=disabled',
       ];
       if (!isLinux) {
         launchArgs.push('--start-maximized');
@@ -230,6 +232,9 @@ class UnifiedGoogleWorker extends EventEmitter {
           'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
         locale: 'en-US',
         timezoneId: 'America/New_York',
+        extraHTTPHeaders: {
+          'Accept-Language': 'en-US,en;q=0.9',
+        },
       };
       if (executablePath) {
         launchOpts.executablePath = executablePath;
@@ -288,6 +293,17 @@ class UnifiedGoogleWorker extends EventEmitter {
           this.emit('status_change', this.getStatus());
         }
       });
+
+      // Warm up and prime Google Auth session first
+      try {
+        this.log('Priming Google session (accounts.google.com)...', 'info');
+        await this.page.goto('https://accounts.google.com/', {
+          waitUntil: 'domcontentloaded',
+          timeout: 20000,
+        }).catch(() => {});
+        await this.sleep(2000);
+        await this.handleCloudShellDialogs();
+      } catch (_) {}
 
       this.log(`Navigating to ${targetUrl}...`, 'info');
       await this.page.goto(targetUrl, {
@@ -498,16 +514,35 @@ class UnifiedGoogleWorker extends EventEmitter {
     try {
       return await this.page.evaluate(() => {
         const url = window.location.href || '';
+        const body = document.body ? document.body.innerText.toLowerCase() : '';
+
+        // 1. Google Cookie Error / Privacy Settings Block
         if (
-          url.includes('accounts.google.com/signin/v2/identifier') ||
-          url.includes('accounts.google.com/v3/signin') ||
+          url.includes('support.google.com') ||
+          url.includes('CookieMismatch') ||
+          url.includes('answer.py?hl=') ||
+          url.includes('nocookies') ||
+          body.includes('problem with your cookie settings') ||
+          body.includes("we've detected a problem with your cookie settings") ||
+          body.includes('adjust your privacy settings') ||
+          body.includes('enable cookies')
+        ) {
+          return { state: 'LOGIN_REQUIRED', reason: 'google-cookie-settings-blocked' };
+        }
+
+        // 2. Google Login required
+        if (
+          url.includes('accounts.google.com/signin') ||
           url.includes('accounts.google.com/ServiceLogin') ||
-          url.includes('accounts.google.com/InteractiveLogin')
+          url.includes('accounts.google.com/InteractiveLogin') ||
+          url.includes('accounts.google.com/AccountChooser') ||
+          url.includes('accounts.google.com/v3/signin') ||
+          body.includes('sign in with your google account') ||
+          body.includes('choose an account')
         ) {
           return { state: 'LOGIN_REQUIRED', reason: 'google-login-url' };
         }
 
-        const body = document.body ? document.body.innerText.toLowerCase() : '';
         const disconnectTerms = [
           'session terminated',
           'session disconnected',
@@ -535,12 +570,18 @@ class UnifiedGoogleWorker extends EventEmitter {
           }
         }
 
-        const hasTerminal = !!document.querySelector('.xterm-screen, textarea.xterm-helper-textarea, iframe');
-        if (hasTerminal || body.includes('cloud shell') || body.includes('terminal')) {
+        const hasTerminal = !!document.querySelector(
+          '.xterm-screen, textarea.xterm-helper-textarea, iframe[src*="cloudshell"], iframe[src*="googleusercontent"]'
+        );
+        if (hasTerminal) {
           return { state: 'CONNECTED', reason: 'terminal-dom-active' };
         }
 
-        return { state: 'CONNECTED', reason: 'page-active' };
+        if (body.includes('cloud shell') || body.includes('terminal') || url.includes('cloudshell=true') || url.includes('shell.cloud.google.com')) {
+          return { state: 'CONNECTED', reason: 'cloudshell-page-active' };
+        }
+
+        return { state: 'LOADING', reason: 'page-initializing' };
       });
     } catch (e) {
       return { state: 'UNKNOWN', reason: e.message };
@@ -732,14 +773,18 @@ class UnifiedGoogleWorker extends EventEmitter {
     this.log(`Executing in terminal: "${commandToRun}"`, 'info');
 
     try {
-      const textarea = this.page.locator('textarea.xterm-helper-textarea, .xterm-helper-textarea, textarea').first();
+      let focused = false;
+
+      const textarea = this.page.locator('textarea.xterm-helper-textarea, .xterm-helper-textarea, .terminal textarea').first();
       if ((await textarea.count()) > 0) {
         await textarea.focus({ timeout: 4000 }).catch(() => {});
         await textarea.click({ timeout: 4000 }).catch(() => {});
+        focused = true;
       } else {
         const termScreen = this.page.locator('.xterm-screen, .xterm, [aria-label*="terminal" i]').first();
         if ((await termScreen.count()) > 0) {
           await termScreen.click({ timeout: 4000 }).catch(() => {});
+          focused = true;
         }
       }
 
@@ -750,9 +795,15 @@ class UnifiedGoogleWorker extends EventEmitter {
           if ((await frameTextarea.count()) > 0) {
             await frameTextarea.focus({ timeout: 2000 }).catch(() => {});
             await frameTextarea.click({ timeout: 2000 }).catch(() => {});
+            focused = true;
             break;
           }
         } catch (_) {}
+      }
+
+      if (!focused) {
+        this.log('⚠️ No interactive terminal element found on screen yet.', 'warn');
+        return { ok: false, error: 'Terminal element not found' };
       }
 
       await this.sleep(400);
@@ -861,7 +912,46 @@ class UnifiedGoogleWorker extends EventEmitter {
       return 'Lax';
     };
 
+    const targetDomains = [
+      '.google.com',
+      '.google.co.uk',
+      '.cloud.google.com',
+      'console.cloud.google.com',
+      'shell.cloud.google.com',
+      'accounts.google.com',
+      '.googleusercontent.com',
+      'colab.research.google.com',
+    ];
+
+    const authCookieNames = new Set([
+      'SID',
+      'HSID',
+      'SSID',
+      'APISID',
+      'SAPISID',
+      '__Secure-1PSID',
+      '__Secure-3PSID',
+      '__Secure-1PAPISID',
+      '__Secure-3PAPISID',
+      '__Secure-1PSIDTS',
+      '__Secure-3PSIDTS',
+      '__Secure-1PSIDCC',
+      '__Secure-3PSIDCC',
+      '__Secure-OSID',
+      'OSID',
+      'LSID',
+      'SIDCC',
+      'NID',
+      'SOCS',
+      'CONSENT',
+      'AEC',
+      '1P_JAR',
+      '__Secure-ENID',
+    ]);
+
     const formatted = [];
+    const seen = new Set();
+
     for (const c of raw) {
       if (!c || !c.name || c.value === undefined) continue;
 
@@ -883,25 +973,37 @@ class UnifiedGoogleWorker extends EventEmitter {
       }
 
       if (c.name.startsWith('__Host-')) {
-        const domainClean = (c.domain || 'google.com').replace(/^\.+/, '');
-        cookie.url = `https://${domainClean}`;
+        let cleanHost = (c.domain || '').replace(/^\.+/, '');
+        if (!cleanHost || cleanHost === 'google.com') {
+          cleanHost = c.name.includes('GAPS') ? 'accounts.google.com' : 'console.cloud.google.com';
+        }
+        cookie.url = `https://${cleanHost}`;
       } else {
         cookie.domain = c.domain || '.google.com';
       }
 
-      formatted.push(cookie);
+      const key = `${cookie.name}|${cookie.domain || cookie.url}|${cookie.path}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        formatted.push(cookie);
+      }
 
-      // Replicate root and regional google session tokens (.google.co.uk, .google.co.in, etc.) to .google.com and cloud domains
+      // Replicate root and regional google session tokens to .google.com and cloud domains
       if (
-        c.domain && c.domain.includes('google.') &&
+        c.domain &&
+        c.domain.includes('google.') &&
         !c.name.startsWith('__Host-') &&
-        ['SID', 'HSID', 'SSID', 'APISID', 'SAPISID', '__Secure-1PSID', '__Secure-3PSID', '__Secure-1PAPISID', '__Secure-3PAPISID', '__Secure-1PSIDTS', '__Secure-3PSIDTS', '__Secure-1PSIDCC', '__Secure-3PSIDCC', 'NID', 'SOCS', 'CONSENT', 'AEC', '1P_JAR'].includes(c.name)
+        authCookieNames.has(c.name)
       ) {
-        if (!c.domain.endsWith('.google.com')) {
-          formatted.push({ ...cookie, domain: '.google.com' });
+        for (const dom of targetDomains) {
+          const repCookie = { ...cookie, domain: dom };
+          delete repCookie.url;
+          const repKey = `${repCookie.name}|${repCookie.domain}|${repCookie.path}`;
+          if (!seen.has(repKey)) {
+            seen.add(repKey);
+            formatted.push(repCookie);
+          }
         }
-        formatted.push({ ...cookie, domain: '.cloud.google.com' });
-        formatted.push({ ...cookie, domain: '.googleusercontent.com' });
       }
     }
     return formatted;
@@ -936,8 +1038,10 @@ class UnifiedGoogleWorker extends EventEmitter {
 
         // Prime Google Auth session
         try {
+          this.log('Priming Google session (accounts.google.com)...', 'info');
           await this.page.goto('https://accounts.google.com/', { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
-          await this.sleep(1500);
+          await this.sleep(2000);
+          await this.handleCloudShellDialogs();
         } catch (_) {}
 
         const mode = this.config.mode || 'cloudshell';
@@ -945,7 +1049,9 @@ class UnifiedGoogleWorker extends EventEmitter {
         await this.page.goto(target, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
         await this.sleep(4000);
         await this.handleCloudShellDialogs();
-        const valid = !(this.page.url() || '').includes('accounts.google.com') && !(this.page.url() || '').includes('CookieMismatch') && !(this.page.url() || '').includes('support.google.com');
+        const valid = !(this.page.url() || '').includes('accounts.google.com') &&
+          !(this.page.url() || '').includes('CookieMismatch') &&
+          !(this.page.url() || '').includes('support.google.com');
         return { ok: true, count: pwCookies.length, appliedTo: 'running-session', valid };
       } catch (e) {
         this.log(`addCookies failed: ${e.message}`, 'warn');
@@ -965,8 +1071,21 @@ class UnifiedGoogleWorker extends EventEmitter {
         headless: true,
         viewport: { width: 1400, height: 900 },
         args: isLinux
-          ? ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--disable-blink-features=AutomationControlled']
-          : ['--start-maximized', '--disable-blink-features=AutomationControlled'],
+          ? [
+              '--no-sandbox',
+              '--disable-setuid-sandbox',
+              '--disable-dev-shm-usage',
+              '--disable-gpu',
+              '--disable-blink-features=AutomationControlled',
+              '--disable-features=ThirdPartyCookiePhaseout,BlockThirdPartyCookies,PrivacySandboxSettings4',
+              '--test-third-party-cookie-phaseout=disabled',
+            ]
+          : [
+              '--start-maximized',
+              '--disable-blink-features=AutomationControlled',
+              '--disable-features=ThirdPartyCookiePhaseout,BlockThirdPartyCookies,PrivacySandboxSettings4',
+              '--test-third-party-cookie-phaseout=disabled',
+            ],
         ignoreDefaultArgs: ['--enable-automation'],
         userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
       };
