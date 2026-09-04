@@ -206,15 +206,27 @@ class UnifiedGoogleWorker extends EventEmitter {
 
     try {
       const isLinux = process.platform === 'linux';
-      const launchArgs = isLinux
-        ? ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu']
-        : ['--start-maximized'];
+      const launchArgs = [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-gpu',
+        '--disable-blink-features=AutomationControlled',
+        '--disable-infobars',
+        '--window-size=1366,768',
+        '--lang=en-US,en',
+      ];
 
       const executablePath = this._detectExecutablePath();
       const launchOpts = {
         headless: isHeadless,
-        viewport: { width: 1280, height: 800 },
+        viewport: { width: 1366, height: 768 },
         args: launchArgs,
+        ignoreDefaultArgs: ['--enable-automation'],
+        userAgent:
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+        locale: 'en-US',
+        timezoneId: 'America/New_York',
       };
       if (executablePath) {
         launchOpts.executablePath = executablePath;
@@ -236,6 +248,16 @@ class UnifiedGoogleWorker extends EventEmitter {
 
       // Launch Persistent Context (Preserves Cookies and Local Storage permanently)
       this.context = await chromium.launchPersistentContext(this.userDataDir, launchOpts);
+
+      // Bypass Google webdriver detection across all pages & iframes
+      await this.context.addInitScript(() => {
+        try {
+          Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+          window.navigator.chrome = { runtime: {} };
+          Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+          Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+        } catch (_) {}
+      });
 
       // Auto-inject saved backup cookies if present
       await this._loadSavedCookiesIntoContext();
@@ -775,7 +797,9 @@ class UnifiedGoogleWorker extends EventEmitter {
       }
 
       if (Array.isArray(cookies) && cookies.length > 0) {
-        await this.context.addCookies(cookies);
+        const formatted = this._cleanAndFormatCookies(cookies);
+        await this.context.addCookies(formatted);
+        this.log(`Successfully injected ${formatted.length} formatted cookies into context.`, 'info');
         // Auto-refresh saved cookies periodically
         this._startCookieAutoBackup();
       }
@@ -807,6 +831,62 @@ class UnifiedGoogleWorker extends EventEmitter {
     }, 5 * 60 * 1000); // Every 5 minutes
   }
 
+  _cleanAndFormatCookies(raw) {
+    if (!Array.isArray(raw)) return [];
+    const mapSameSite = (v) => {
+      const s = (v || '').toLowerCase();
+      if (s === 'no_restriction' || s === 'none') return 'None';
+      if (s === 'strict') return 'Strict';
+      return 'Lax';
+    };
+
+    const formatted = [];
+    for (const c of raw) {
+      if (!c || !c.name || c.value === undefined) continue;
+
+      const sameSite = mapSameSite(c.sameSite);
+      const isNone = sameSite === 'None';
+      const isSecure = Boolean(c.secure || isNone || c.name.startsWith('__Secure-') || c.name.startsWith('__Host-'));
+
+      let domain = c.domain ? c.domain.trim() : '.google.com';
+
+      const cookie = {
+        name: c.name,
+        value: String(c.value),
+        path: c.path || '/',
+        httpOnly: Boolean(c.httpOnly),
+        secure: isSecure,
+        sameSite: sameSite,
+      };
+
+      if (c.expirationDate && c.expirationDate > 0) {
+        cookie.expires = Math.floor(c.expirationDate);
+      }
+
+      if (c.name.startsWith('__Host-')) {
+        // Host-only cookies MUST NOT have domain attribute in Playwright / RFC
+        const cleanHost = domain.replace(/^\.+/, '');
+        cookie.url = `https://${cleanHost}`;
+      } else {
+        cookie.domain = domain.startsWith('.') || domain.includes('localhost') ? domain : '.' + domain;
+      }
+
+      formatted.push(cookie);
+
+      // Replicate root .google.com session tokens to Cloud Shell & Colab auth subdomains
+      if (
+        (domain === '.google.com' || domain === 'google.com') &&
+        !c.name.startsWith('__Host-') &&
+        ['SID', 'HSID', 'SSID', 'APISID', 'SAPISID', '__Secure-1PSID', '__Secure-3PSID', '__Secure-1PAPISID', '__Secure-3PAPISID', '__Secure-1PSIDTS', '__Secure-3PSIDTS', '__Secure-1PSIDCC', '__Secure-3PSIDCC'].includes(c.name)
+      ) {
+        formatted.push({ ...cookie, domain: '.cloud.google.com' });
+        formatted.push({ ...cookie, domain: '.googleusercontent.com' });
+        formatted.push({ ...cookie, domain: 'shell.cloud.google.com' });
+      }
+    }
+    return formatted;
+  }
+
   async importCookies(input) {
     let raw = input;
     if (!Array.isArray(raw) && raw && Array.isArray(raw.cookies)) raw = raw.cookies;
@@ -814,33 +894,7 @@ class UnifiedGoogleWorker extends EventEmitter {
       return { ok: false, error: 'Expected array of cookie objects from Cookie-Editor' };
     }
 
-    const mapSameSite = (v) => {
-      const s = (v || '').toLowerCase();
-      if (s === 'no_restriction') return 'None';
-      if (s === 'strict') return 'Strict';
-      return 'Lax';
-    };
-
-    const pwCookies = raw
-      .filter((c) => c && c.name && c.value !== undefined)
-      .map((c) => {
-        const cookie = {
-          name: c.name,
-          value: c.value,
-          domain:
-            c.domain && c.domain.startsWith('.')
-              ? c.domain
-              : c.domain
-              ? '.' + c.domain.replace(/^\.+/, '')
-              : '.google.com',
-          path: c.path || '/',
-          httpOnly: !!c.httpOnly,
-          secure: !!c.secure,
-        };
-        if (c.expirationDate && c.expirationDate > 0) cookie.expires = Math.floor(c.expirationDate);
-        cookie.sameSite = mapSameSite(c.sameSite);
-        return cookie;
-      });
+    const pwCookies = this._cleanAndFormatCookies(raw);
 
     if (!pwCookies.length) {
       return { ok: false, error: 'No valid cookies found in payload' };
@@ -849,7 +903,7 @@ class UnifiedGoogleWorker extends EventEmitter {
     // 1. Save cookies to disk backup so it survives stops, restarts, and reboots permanently
     try {
       fs.writeFileSync(this.savedCookiesPath, JSON.stringify(pwCookies, null, 2), 'utf8');
-      this.log(`Persisted ${pwCookies.length} cookies to cookies_saved.json`, 'info');
+      this.log(`Persisted ${pwCookies.length} formatted cookies to cookies_saved.json`, 'info');
     } catch (e) {
       this.log(`Warning writing cookies backup: ${e.message}`, 'warn');
     }
@@ -863,6 +917,7 @@ class UnifiedGoogleWorker extends EventEmitter {
         const target = mode === 'colab' ? this.config.colabUrl : this.config.cloudShellUrl;
         await this.page.goto(target, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
         await this.sleep(4000);
+        await this.handleCloudShellDialogs();
         const valid = !(this.page.url() || '').includes('accounts.google.com');
         return { ok: true, count: pwCookies.length, appliedTo: 'running-session', valid };
       } catch (e) {
@@ -881,10 +936,12 @@ class UnifiedGoogleWorker extends EventEmitter {
       const execPath = this._detectExecutablePath();
       const launchOpts = {
         headless: true,
-        viewport: { width: 1280, height: 800 },
+        viewport: { width: 1400, height: 900 },
         args: isLinux
-          ? ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu']
-          : ['--start-maximized'],
+          ? ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--disable-blink-features=AutomationControlled']
+          : ['--start-maximized', '--disable-blink-features=AutomationControlled'],
+        ignoreDefaultArgs: ['--enable-automation'],
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
       };
       if (execPath) launchOpts.executablePath = execPath;
 
@@ -892,7 +949,7 @@ class UnifiedGoogleWorker extends EventEmitter {
       try {
         await tmp.addCookies(pwCookies);
         const page = tmp.pages()[0] || (await tmp.newPage());
-        await page.goto('https://colab.research.google.com/', { waitUntil: 'domcontentloaded', timeout: 35000 }).catch(() => {});
+        await page.goto('https://shell.cloud.google.com/?show=terminal', { waitUntil: 'domcontentloaded', timeout: 35000 }).catch(() => {});
         await this.sleep(3000);
         const valid = !page.url().includes('accounts.google.com');
         this.log(`Saved cookies to profile: ${valid ? 'VALID ✓' : 'SAVED'} (${pwCookies.length} cookies)`, 'info');
