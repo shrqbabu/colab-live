@@ -658,22 +658,41 @@
   // ── Start / Stop / Reconnect ──
   btnStart.addEventListener('click', async () => {
     btnStart.disabled = true;
-    appendLog({ level: 'info', msg: `Starting ${currentMode.toUpperCase()} worker...` });
+    btnStart.innerHTML = '<span>⏳</span> Starting...';
+    appendLog({ level: 'info', msg: `🚀 Requesting worker start on VPS (${currentMode.toUpperCase()} mode)...` });
     try {
       const data = await apiJson('/api/start', { method: 'POST' });
-      if (!data.ok) alert('Start failed: ' + (data.message || data.error));
+      if (data && data.ok) {
+        appendLog({ level: 'info', msg: '✓ Chromium browser started on VPS' });
+        pollStatusAndLogs();
+        setTimeout(fetchScreenshot, 1000);
+        setTimeout(fetchScreenshot, 2500);
+        setTimeout(fetchScreenshot, 5000);
+      } else {
+        appendLog({ level: 'warn', msg: `Start response: ${(data && (data.message || data.error)) || 'Already running'}` });
+      }
     } catch (e) {
+      appendLog({ level: 'error', msg: `Start request error: ${e.message}` });
       alert('Start request error: ' + e.message);
+    } finally {
+      btnStart.innerHTML = '<span>▶</span> Start Session';
+      pollStatusAndLogs();
     }
   });
 
   btnStop.addEventListener('click', async () => {
     btnStop.disabled = true;
-    appendLog({ level: 'info', msg: 'Stopping worker (Profile preserved)...' });
+    btnStop.innerHTML = '<span>⏳</span> Stopping...';
+    appendLog({ level: 'info', msg: 'Stopping worker (Persistent profile preserved)...' });
     try {
       await apiJson('/api/stop', { method: 'POST' });
+      appendLog({ level: 'info', msg: 'Worker stopped cleanly' });
     } catch (e) {
+      appendLog({ level: 'error', msg: `Stop error: ${e.message}` });
       alert('Stop error: ' + e.message);
+    } finally {
+      btnStop.innerHTML = '<span>⏹</span> Stop Session';
+      pollStatusAndLogs();
     }
   });
 
@@ -686,6 +705,7 @@
       alert('Reconnect error: ' + e.message);
     } finally {
       setTimeout(() => { btnReconnect.disabled = false; }, 3000);
+      pollStatusAndLogs();
     }
   });
 
@@ -897,43 +917,74 @@
     }
   });
 
-  // ── SSE Real-time Setup ──
-  function setupSSE() {
-    if (sseSource) sseSource.close();
-    sseSource = new EventSource('/api/events');
+  // ── Polling & SSE Real-time Setup ──
+  let lastLogCount = 0;
+  async function pollStatusAndLogs() {
+    try {
+      const [statusRes, logsRes] = await Promise.all([
+        apiJson('/api/status').catch(() => null),
+        apiJson('/api/logs').catch(() => null),
+      ]);
 
-    sseSource.addEventListener('init', (e) => {
-      try {
-        const data = JSON.parse(e.data);
-        if (data.status) {
-          if (data.status.mode) setModeUI(data.status.mode);
-          updateStatusUI(data.status);
+      if (statusRes && statusRes.ok) {
+        if (statusRes.mode && statusRes.mode !== currentMode) {
+          setModeUI(statusRes.mode);
         }
-        if (data.logs && Array.isArray(data.logs)) {
+        updateStatusUI(statusRes);
+        if (statusRes.isRunning) {
+          fetchScreenshot();
+        }
+      }
+
+      if (logsRes && logsRes.ok && Array.isArray(logsRes.logs)) {
+        if (logsRes.logs.length !== lastLogCount || logContainer.children.length <= 1) {
+          lastLogCount = logsRes.logs.length;
           logContainer.innerHTML = '';
-          data.logs.forEach(appendLog);
+          logsRes.logs.forEach(appendLog);
         }
-      } catch (_) {}
-    });
+      }
+    } catch (_) {}
+  }
 
-    sseSource.addEventListener('status', (e) => {
-      try {
-        const status = JSON.parse(e.data);
-        if (status.mode && status.mode !== currentMode) setModeUI(status.mode);
-        updateStatusUI(status);
-      } catch (_) {}
-    });
+  function setupSSE() {
+    try {
+      if (sseSource) sseSource.close();
+      sseSource = new EventSource('/api/events');
 
-    sseSource.addEventListener('log', (e) => {
-      try {
-        const entry = JSON.parse(e.data);
-        appendLog(entry);
-      } catch (_) {}
-    });
+      sseSource.addEventListener('init', (e) => {
+        try {
+          const data = JSON.parse(e.data);
+          if (data.status) {
+            if (data.status.mode) setModeUI(data.status.mode);
+            updateStatusUI(data.status);
+          }
+          if (data.logs && Array.isArray(data.logs)) {
+            logContainer.innerHTML = '';
+            data.logs.forEach(appendLog);
+          }
+        } catch (_) {}
+      });
 
-    sseSource.onerror = () => {
-      setTimeout(setupSSE, 5000);
-    };
+      sseSource.addEventListener('status', (e) => {
+        try {
+          const status = JSON.parse(e.data);
+          if (status.mode && status.mode !== currentMode) setModeUI(status.mode);
+          updateStatusUI(status);
+        } catch (_) {}
+      });
+
+      sseSource.addEventListener('log', (e) => {
+        try {
+          const entry = JSON.parse(e.data);
+          appendLog(entry);
+        } catch (_) {}
+      });
+
+      sseSource.onerror = () => {
+        try { sseSource.close(); } catch (_) {}
+        sseSource = null;
+      };
+    } catch (_) {}
   }
 
   // ── Initial Load ──
@@ -947,15 +998,12 @@
       })
       .catch(() => {});
 
-    apiJson('/api/status')
-      .then((data) => {
-        if (data && data.ok) {
-          updateStatusUI(data);
-        }
-      })
-      .catch(() => {});
-
+    pollStatusAndLogs();
     setupSSE();
+    fetchScreenshot();
+
+    // Regular 2-second background polling ensures real-time updates on Vercel and VPS
+    setInterval(pollStatusAndLogs, 2000);
   }
 
   // Boot: Check login first
