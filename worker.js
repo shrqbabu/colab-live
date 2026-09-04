@@ -215,11 +215,10 @@ class UnifiedGoogleWorker extends EventEmitter {
         '--disable-infobars',
         '--window-size=1400,900',
         '--lang=en-US,en',
-        '--disable-features=IsolateOrigins,site-per-process,SameSiteByDefaultCookies,CookiesWithoutSameSiteMustBeSecure',
-        '--disable-site-isolation-trials',
-        '--disable-web-security',
-        '--allow-running-insecure-content',
       ];
+      if (!isLinux) {
+        launchArgs.push('--start-maximized');
+      }
 
       const executablePath = this._detectExecutablePath();
       const launchOpts = {
@@ -290,13 +289,6 @@ class UnifiedGoogleWorker extends EventEmitter {
         }
       });
 
-      // Prime Google Auth session
-      try {
-        this.log('Priming Google session...', 'info');
-        await this.page.goto('https://accounts.google.com/', { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
-        await this.sleep(1500);
-      } catch (_) {}
-
       this.log(`Navigating to ${targetUrl}...`, 'info');
       await this.page.goto(targetUrl, {
         waitUntil: 'domcontentloaded',
@@ -305,7 +297,7 @@ class UnifiedGoogleWorker extends EventEmitter {
         this.log(`Navigation note: ${e.message}`, 'warn');
       });
 
-      await this.sleep(2000);
+      await this.sleep(3000);
       await this.handleCloudShellDialogs();
 
       try {
@@ -506,7 +498,12 @@ class UnifiedGoogleWorker extends EventEmitter {
     try {
       return await this.page.evaluate(() => {
         const url = window.location.href || '';
-        if (url.includes('accounts.google.com') || url.includes('google.com/signin')) {
+        if (
+          url.includes('accounts.google.com/signin/v2/identifier') ||
+          url.includes('accounts.google.com/v3/signin') ||
+          url.includes('accounts.google.com/ServiceLogin') ||
+          url.includes('accounts.google.com/InteractiveLogin')
+        ) {
           return { state: 'LOGIN_REQUIRED', reason: 'google-login-url' };
         }
 
@@ -682,12 +679,22 @@ class UnifiedGoogleWorker extends EventEmitter {
   async handleCloudShellDialogs() {
     if (!this.page || this.page.isClosed()) return;
     try {
-      const dialogBtns = this.page.locator('button, [role="button"]').filter({
-        hasText: /authorize|start cloud shell|open terminal|continue|agree|got it/i,
+      // Cookie consent / region banner
+      const consentBtns = this.page.locator('button, [role="button"], a').filter({
+        hasText: /accept all|i agree|agree|got it|allow all|consent/i,
+      });
+      if ((await consentBtns.count()) > 0) {
+        await consentBtns.first().click({ timeout: 3000 }).catch(() => {});
+        this.log('Dismissed Google cookie / consent dialog', 'info');
+        await this.sleep(1000);
+      }
+
+      const dialogBtns = this.page.locator('button, [role="button"], a.mat-button, .mat-button').filter({
+        hasText: /authorize|start cloud shell|open terminal|continue|agree|got it|start/i,
       });
       if ((await dialogBtns.count()) > 0) {
-        await dialogBtns.first().click({ timeout: 4000 });
-        this.log('Clicked Cloud Shell startup/dialog button', 'info');
+        await dialogBtns.first().click({ timeout: 4000 }).catch(() => {});
+        this.log('Clicked Cloud Shell startup/authorize dialog button', 'info');
         await this.sleep(2000);
       }
     } catch (_) {}
@@ -862,8 +869,6 @@ class UnifiedGoogleWorker extends EventEmitter {
       const isNone = sameSite === 'None';
       const isSecure = Boolean(c.secure || isNone || c.name.startsWith('__Secure-') || c.name.startsWith('__Host-'));
 
-      let domain = c.domain ? c.domain.trim() : '.google.com';
-
       const cookie = {
         name: c.name,
         value: String(c.value),
@@ -878,27 +883,25 @@ class UnifiedGoogleWorker extends EventEmitter {
       }
 
       if (c.name.startsWith('__Host-')) {
-        // Host-only cookies MUST NOT have domain attribute in Playwright / RFC
-        const cleanHost = domain.replace(/^\.+/, '');
-        cookie.url = `https://${cleanHost}`;
+        const domainClean = (c.domain || 'google.com').replace(/^\.+/, '');
+        cookie.url = `https://${domainClean}`;
       } else {
-        cookie.domain = domain.startsWith('.') || domain.includes('localhost') ? domain : '.' + domain;
+        cookie.domain = c.domain || '.google.com';
       }
 
       formatted.push(cookie);
 
       // Replicate root and regional google session tokens (.google.co.uk, .google.co.in, etc.) to .google.com and cloud domains
       if (
-        domain.includes('google.') &&
+        c.domain && c.domain.includes('google.') &&
         !c.name.startsWith('__Host-') &&
         ['SID', 'HSID', 'SSID', 'APISID', 'SAPISID', '__Secure-1PSID', '__Secure-3PSID', '__Secure-1PAPISID', '__Secure-3PAPISID', '__Secure-1PSIDTS', '__Secure-3PSIDTS', '__Secure-1PSIDCC', '__Secure-3PSIDCC', 'NID', 'SOCS', 'CONSENT', 'AEC', '1P_JAR'].includes(c.name)
       ) {
-        if (domain !== '.google.com') {
+        if (!c.domain.endsWith('.google.com')) {
           formatted.push({ ...cookie, domain: '.google.com' });
         }
         formatted.push({ ...cookie, domain: '.cloud.google.com' });
         formatted.push({ ...cookie, domain: '.googleusercontent.com' });
-        formatted.push({ ...cookie, domain: 'shell.cloud.google.com' });
       }
     }
     return formatted;
