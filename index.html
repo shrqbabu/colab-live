@@ -11,7 +11,46 @@
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-  <div class="app-container">
+
+  <!-- ==================== 1. LOGIN VIEW ==================== -->
+  <div id="loginView" class="auth-wrapper" style="display: none;">
+    <div class="auth-card">
+      <div class="auth-header">
+        <div class="auth-logo">⚡</div>
+        <h2>Google Automation Manager</h2>
+        <p>24/7 Cloud Shell &amp; Colab Automation Portal</p>
+      </div>
+
+      <form id="loginForm" class="auth-form">
+        <div class="form-group">
+          <label for="loginEmail">Email Address</label>
+          <input type="email" id="loginEmail" class="input-field" placeholder="admin@cloudshell.pro" required autocomplete="username">
+        </div>
+
+        <div class="form-group">
+          <label for="loginPassword">Password</label>
+          <div class="password-wrapper">
+            <input type="password" id="loginPassword" class="input-field" placeholder="••••••••••••" required autocomplete="current-password">
+            <button type="button" class="btn-toggle-pw" id="togglePasswordBtn">👁</button>
+          </div>
+        </div>
+
+        <div id="loginError" class="alert-box error" style="display: none;"></div>
+
+        <button type="submit" class="btn btn-primary btn-block btn-lg" id="loginSubmitBtn">
+          <span>Sign In to Dashboard</span> ➔
+        </button>
+
+        <div class="quick-fill-box">
+          <span>Default credentials:</span>
+          <button type="button" class="btn-link" id="quickFillBtn">Auto-fill (admin@cloudshell.pro / password123)</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ==================== 2. MAIN DASHBOARD VIEW ==================== -->
+  <div id="dashboardView" class="app-container">
     <!-- TOP NAVBAR / HEADER -->
     <header class="app-header">
       <div class="header-brand">
@@ -40,6 +79,9 @@
         </button>
         <button id="btnSettings" class="btn btn-secondary btn-nav">
           <span class="btn-icon">⚙️</span> Config
+        </button>
+        <button id="btnLogout" class="btn btn-secondary btn-nav" title="Logout session">
+          <span class="btn-icon">🚪</span> Logout
         </button>
       </div>
     </header>
@@ -241,7 +283,7 @@
         <div class="modal-header">
           <div class="modal-title-group">
             <span class="modal-icon">🌐</span>
-            <h3>Oracle / Cloud VPS Node (Port 80)</h3>
+            <h3>Oracle / Cloud VPS Node (Port 8080)</h3>
           </div>
           <button class="btn-close" id="btnCloseVps" aria-label="Close">&times;</button>
         </div>
@@ -249,13 +291,13 @@
           <div class="info-banner">
             <span class="info-icon">💡</span>
             <p class="modal-desc">
-              Agar aapka backend Playwright instance <strong>Oracle VPS ya Cloud Server (Port 80)</strong> par chal raha hai, toh uska public IP/URL yahan dalein:
+              Agar aapka backend Playwright instance <strong>Oracle VPS / Cloud Server (Port 8080)</strong> par chal raha hai, toh uska public IP yahan dalein:
             </p>
           </div>
           <div class="form-group">
-            <label for="vpsUrlInput">VPS Backend URL (Port 80 / 8080)</label>
-            <input type="text" id="vpsUrlInput" class="input-field font-mono" placeholder="http://123.45.67.89 or http://your-vps.com">
-            <small>Direct IP or domain without trailing slash (e.g. http://123.45.67.89)</small>
+            <label for="vpsUrlInput">VPS Backend URL (Port 8080)</label>
+            <input type="text" id="vpsUrlInput" class="input-field font-mono" placeholder="http://68.233.113.7:8080">
+            <small>Direct IP e.g. http://68.233.113.7:8080</small>
           </div>
           <div class="form-group">
             <label for="vpsSecretInput">API Secret Key (Optional)</label>

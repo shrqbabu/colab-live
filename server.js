@@ -13,6 +13,7 @@ const CONFIG_PATH = path.join(__dirname, 'config.json');
 const worker = new UnifiedGoogleWorker(CONFIG_PATH);
 
 // In-Memory state
+const activeSessions = new Set();
 const logBuffer = [];
 const MAX_LOGS = 350;
 const sseClients = new Set();
@@ -131,6 +132,43 @@ const server = http.createServer(async (req, res) => {
   if (method === 'OPTIONS') {
     res.writeHead(204);
     res.end();
+    return;
+  }
+
+  // ── Auth Endpoints ──
+  if (pathname === '/api/login' && method === 'POST') {
+    try {
+      const body = await parseJsonBody(req);
+      const conf = worker.loadConfig();
+      const email = body.email || '';
+      const password = body.password || '';
+
+      if (
+        email === (conf.auth?.email || 'admin@cloudshell.pro') &&
+        password === (conf.auth?.password || 'password123')
+      ) {
+        const token = generateToken();
+        activeSessions.add(token);
+        sendJson(res, 200, { ok: true, token });
+      } else {
+        sendError(res, 401, 'Invalid credentials');
+      }
+    } catch (e) {
+      sendError(res, 400, e.message);
+    }
+    return;
+  }
+
+  if (pathname === '/api/logout' && method === 'POST') {
+    const token = (req.headers['authorization'] || '').replace(/^Bearer\s+/i, '').trim();
+    activeSessions.delete(token);
+    sendJson(res, 200, { ok: true });
+    return;
+  }
+
+  if (pathname === '/api/auth/check') {
+    const token = (req.headers['authorization'] || '').replace(/^Bearer\s+/i, '').trim();
+    sendJson(res, 200, { ok: true, authenticated: activeSessions.has(token) });
     return;
   }
 

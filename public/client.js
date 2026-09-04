@@ -12,11 +12,26 @@
   let currentMode = 'cloudshell';
   let appConfig = {};
 
+  // Auth State
+  let authToken = localStorage.getItem('google_auth_token') || null;
+
   // VPS Connection Config
   let customVpsUrl = (localStorage.getItem('google_vps_url') || localStorage.getItem('colab_vps_url') || '').trim();
   let customVpsSecret = (localStorage.getItem('google_vps_secret') || '').trim();
 
-  // DOM Elements
+  // Auth DOM Elements
+  const loginView = document.getElementById('loginView');
+  const dashboardView = document.getElementById('dashboardView');
+  const loginForm = document.getElementById('loginForm');
+  const loginEmail = document.getElementById('loginEmail');
+  const loginPassword = document.getElementById('loginPassword');
+  const loginError = document.getElementById('loginError');
+  const loginSubmitBtn = document.getElementById('loginSubmitBtn');
+  const togglePasswordBtn = document.getElementById('togglePasswordBtn');
+  const quickFillBtn = document.getElementById('quickFillBtn');
+  const btnLogout = document.getElementById('btnLogout');
+
+  // Dashboard DOM Elements
   const modeLogo = document.getElementById('modeLogo');
   const activeModeBadge = document.getElementById('activeModeBadge');
   const globalStatusPill = document.getElementById('globalStatusPill');
@@ -97,6 +112,9 @@
   // ── Unified API Fetch Wrapper with VPS Header Bridge ──
   async function apiFetch(path, opts = {}) {
     const headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
+    if (authToken) {
+      headers['Authorization'] = `Bearer ${authToken}`;
+    }
     if (customVpsUrl && customVpsUrl.length > 7 && !/^https?:\/*$/i.test(customVpsUrl)) {
       headers['X-VPS-URL'] = customVpsUrl;
     }
@@ -104,6 +122,10 @@
       headers['X-API-Secret'] = customVpsSecret;
     }
     const res = await fetch(path, { ...opts, headers });
+    if (res.status === 401) {
+      handleUnauthorized();
+      throw new Error('Unauthorized');
+    }
     return res;
   }
 
@@ -118,6 +140,109 @@
       }
       throw new Error('Server returned non-JSON response: ' + text.substring(0, 80));
     }
+  }
+
+  // ── Auth View Controllers ──
+  function handleUnauthorized() {
+    authToken = null;
+    localStorage.removeItem('google_auth_token');
+    showLogin();
+    if (sseSource) {
+      try { sseSource.close(); } catch (_) {}
+      sseSource = null;
+    }
+  }
+
+  function showLogin() {
+    if (loginView) loginView.style.display = 'flex';
+    if (dashboardView) dashboardView.style.display = 'none';
+  }
+
+  function showDashboard() {
+    if (loginView) loginView.style.display = 'none';
+    if (dashboardView) dashboardView.style.display = 'flex';
+    loadInitialData();
+  }
+
+  async function checkAuth() {
+    try {
+      const res = await apiJson('/api/auth/check');
+      if (res && res.authenticated) {
+        showDashboard();
+      } else {
+        showLogin();
+      }
+    } catch (_) {
+      showLogin();
+    }
+  }
+
+  // Login Form Listeners
+  if (loginForm) {
+    loginForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const email = loginEmail.value.trim();
+      const password = loginPassword.value.trim();
+      loginError.style.display = 'none';
+      loginSubmitBtn.disabled = true;
+      loginSubmitBtn.innerHTML = '<span>Verifying...</span> ⏳';
+
+      try {
+        const loginHeaders = { 'Content-Type': 'application/json' };
+        if (customVpsUrl) loginHeaders['X-VPS-URL'] = customVpsUrl;
+        if (customVpsSecret) loginHeaders['X-API-Secret'] = customVpsSecret;
+
+        const res = await fetch('/api/login', {
+          method: 'POST',
+          headers: loginHeaders,
+          body: JSON.stringify({ email, password }),
+        });
+        const data = await res.json();
+
+        if (data && data.ok && data.token) {
+          authToken = data.token;
+          localStorage.setItem('google_auth_token', authToken);
+          showDashboard();
+        } else {
+          loginError.textContent = (data && data.error) || 'Invalid email or password';
+          loginError.style.display = 'block';
+        }
+      } catch (err) {
+        loginError.textContent = 'Login request error: ' + err.message;
+        loginError.style.display = 'block';
+      } finally {
+        loginSubmitBtn.disabled = false;
+        loginSubmitBtn.innerHTML = '<span>Sign In to Dashboard</span> ➔';
+      }
+    });
+  }
+
+  if (togglePasswordBtn) {
+    togglePasswordBtn.addEventListener('click', () => {
+      if (loginPassword.type === 'password') {
+        loginPassword.type = 'text';
+        togglePasswordBtn.textContent = '🔒';
+      } else {
+        loginPassword.type = 'password';
+        togglePasswordBtn.textContent = '👁';
+      }
+    });
+  }
+
+  if (quickFillBtn) {
+    quickFillBtn.addEventListener('click', () => {
+      loginEmail.value = 'admin@cloudshell.pro';
+      loginPassword.value = 'password123';
+    });
+  }
+
+  if (btnLogout) {
+    btnLogout.addEventListener('click', async () => {
+      try {
+        await apiFetch('/api/logout', { method: 'POST' });
+      } catch (_) {}
+      handleUnauthorized();
+    });
   }
 
   // ── Format Duration ──
@@ -644,5 +769,6 @@
     setupSSE();
   }
 
-  loadInitialData();
+  // Boot: Check login first
+  checkAuth();
 })();
