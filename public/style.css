@@ -973,6 +973,42 @@ body {
   transform: translateY(1px);
 }
 
+.key-chip.key-ctrl {
+  background: rgba(99, 102, 241, 0.18);
+  border-color: rgba(99, 102, 241, 0.45);
+  color: #c7d2fe;
+}
+
+.key-chip.key-ctrl:hover {
+  background: rgba(99, 102, 241, 0.35);
+  border-color: rgba(99, 102, 241, 0.8);
+  color: #ffffff;
+  box-shadow: 0 0 10px rgba(99, 102, 241, 0.3);
+}
+
+.btn-ctrl-key {
+  padding: 6px 12px;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  white-space: nowrap;
+  flex-shrink: 0;
+  border: 1px solid var(--border-subtle);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-muted);
+}
+
+.btn-ctrl-key:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  border-color: var(--accent-cyan);
+}
+
+.screenshot-wrapper:focus {
+  outline: 2px solid var(--accent-cyan);
+  outline-offset: -1px;
+}
+
 .screenshot-placeholder {
   text-align: center;
   color: var(--text-dim);

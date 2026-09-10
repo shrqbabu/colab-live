@@ -808,6 +808,12 @@ class UnifiedGoogleWorker extends EventEmitter {
     }
 
     const commandToRun = cmd || this.config.startupCommand || 'docker start omniroute';
+    if (commandToRun.trim().toLowerCase() === 'ctrl+c' || commandToRun.trim().toLowerCase() === '^c') {
+      return await this.pressKey('Control+c');
+    }
+    if (commandToRun.trim().toLowerCase() === 'ctrl+d' || commandToRun.trim().toLowerCase() === '^d') {
+      return await this.pressKey('Control+d');
+    }
     this.log(`Executing in terminal: "${commandToRun}"`, 'info');
 
     try {
@@ -943,8 +949,15 @@ class UnifiedGoogleWorker extends EventEmitter {
     try {
       const validKey = String(key || 'Enter').trim();
       this.log(`Keyboard key press: ${validKey}`, 'info');
-      if (validKey.toLowerCase() === 'ctrl+c' || validKey.toLowerCase() === 'control+c') {
+      const lower = validKey.toLowerCase();
+      if (lower === 'ctrl+c' || lower === 'control+c') {
         await this.page.keyboard.press('Control+c');
+      } else if (lower === 'ctrl+v' || lower === 'control+v') {
+        await this.page.keyboard.press('Control+v');
+      } else if (lower === 'ctrl+d' || lower === 'control+d') {
+        await this.page.keyboard.press('Control+d');
+      } else if (lower.startsWith('ctrl+')) {
+        await this.page.keyboard.press('Control+' + validKey.slice(5));
       } else {
         await this.page.keyboard.press(validKey);
       }

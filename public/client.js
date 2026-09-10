@@ -68,8 +68,12 @@
   const commandCardSub = document.getElementById('commandCardSub');
   const cmdInput = document.getElementById('cmdInput');
   const btnSendCmd = document.getElementById('btnSendCmd');
+  const btnTerminalCtrlC = document.getElementById('btnTerminalCtrlC');
+  const btnTerminalCtrlV = document.getElementById('btnTerminalCtrlV');
+  const btnTerminalCtrlD = document.getElementById('btnTerminalCtrlD');
   const quickCommandsContainer = document.getElementById('quickCommandsContainer');
 
+  const screenshotWrapper = document.getElementById('screenshotWrapper');
   const terminalScreenshot = document.getElementById('terminalScreenshot');
   const screenshotPlaceholder = document.getElementById('screenshotPlaceholder');
   const btnRefreshScreenshot = document.getElementById('btnRefreshScreenshot');
@@ -453,6 +457,9 @@
   // ── Interactive Viewport Click Translation ──
   if (terminalScreenshot) {
     terminalScreenshot.addEventListener('click', async (e) => {
+      if (screenshotWrapper) {
+        screenshotWrapper.focus();
+      }
       const rect = terminalScreenshot.getBoundingClientRect();
       const natW = terminalScreenshot.naturalWidth || 1400;
       const natH = terminalScreenshot.naturalHeight || 900;
@@ -592,6 +599,31 @@
 
   async function pressBrowserKey(key) {
     if (!key) return;
+    const lower = key.toLowerCase();
+
+    // If Ctrl+V is pressed, attempt to read clipboard and paste into browser
+    if (lower === 'ctrl+v' || lower === 'control+v') {
+      let pasted = false;
+      if (navigator.clipboard && navigator.clipboard.readText) {
+        try {
+          const clipText = await navigator.clipboard.readText();
+          if (clipText && clipText.length > 0) {
+            appendLog({ level: 'info', msg: `📋 Pasting clipboard text (${clipText.length} chars) into browser...` });
+            await apiJson('/api/browser/type', {
+              method: 'POST',
+              body: JSON.stringify({ text: clipText }),
+            });
+            setTimeout(fetchScreenshot, 400);
+            setTimeout(fetchScreenshot, 1000);
+            pasted = true;
+          }
+        } catch (clipErr) {
+          console.log('Clipboard read error or permission denied:', clipErr.message);
+        }
+      }
+      if (pasted) return;
+    }
+
     appendLog({ level: 'info', msg: `⌨️ Key press: [${key}]` });
     try {
       await apiJson('/api/browser/key', {
@@ -622,6 +654,22 @@
       pressBrowserKey(key);
     });
   });
+
+  if (screenshotWrapper) {
+    screenshotWrapper.addEventListener('keydown', async (e) => {
+      if (['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName)) return;
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'c' || e.key === 'C')) {
+        e.preventDefault();
+        await pressBrowserKey('Control+c');
+      } else if ((e.ctrlKey || e.metaKey) && (e.key === 'v' || e.key === 'V')) {
+        e.preventDefault();
+        await pressBrowserKey('Control+v');
+      } else if ((e.ctrlKey || e.metaKey) && (e.key === 'd' || e.key === 'D')) {
+        e.preventDefault();
+        await pressBrowserKey('Control+d');
+      }
+    });
+  }
 
   // ── Mode Switch Actions ──
   btnModeCloudshell.addEventListener('click', async () => {
@@ -733,6 +781,42 @@
   cmdInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') sendCommand(cmdInput.value);
   });
+
+  if (btnTerminalCtrlC) {
+    btnTerminalCtrlC.addEventListener('click', async () => {
+      appendLog({ level: 'warn', msg: '🛑 Sending SIGINT (Ctrl+C) to cancel command...' });
+      await pressBrowserKey('Control+c');
+    });
+  }
+
+  if (btnTerminalCtrlV) {
+    btnTerminalCtrlV.addEventListener('click', async () => {
+      let pasted = false;
+      if (navigator.clipboard && navigator.clipboard.readText) {
+        try {
+          const text = await navigator.clipboard.readText();
+          if (text) {
+            cmdInput.value = text;
+            cmdInput.focus();
+            appendLog({ level: 'info', msg: `📋 Pasted clipboard into terminal input (${text.length} chars)` });
+            pasted = true;
+          }
+        } catch (err) {
+          console.log('Clipboard read error:', err.message);
+        }
+      }
+      if (!pasted) {
+        cmdInput.focus();
+      }
+    });
+  }
+
+  if (btnTerminalCtrlD) {
+    btnTerminalCtrlD.addEventListener('click', async () => {
+      appendLog({ level: 'warn', msg: '🚪 Sending EOF (Ctrl+D) to session...' });
+      await pressBrowserKey('Control+d');
+    });
+  }
 
   btnClearLogs.addEventListener('click', () => {
     logContainer.innerHTML = '';

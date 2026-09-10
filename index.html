@@ -196,8 +196,17 @@
         <div class="command-input-group">
           <div class="terminal-prefix">&gt;_</div>
           <input type="text" id="cmdInput" class="input-field command-input" placeholder="docker start omniroute" value="docker start omniroute" autocomplete="off">
-          <button id="btnSendCmd" class="btn btn-primary">
+          <button id="btnSendCmd" class="btn btn-primary" title="Send Command">
             <span>⚡ Send</span>
+          </button>
+          <button id="btnTerminalCtrlC" type="button" class="btn btn-secondary btn-ctrl-key" title="Send Ctrl+C (Cancel / Stop Running Command)">
+            <span>🛑 Ctrl+C</span>
+          </button>
+          <button id="btnTerminalCtrlV" type="button" class="btn btn-secondary btn-ctrl-key" title="Paste Clipboard into command">
+            <span>📋 Ctrl+V</span>
+          </button>
+          <button id="btnTerminalCtrlD" type="button" class="btn btn-secondary btn-ctrl-key" title="Send Ctrl+D (EOF / Exit shell)">
+            <span>🚪 Ctrl+D</span>
           </button>
         </div>
         <div class="quick-commands" id="quickCommandsContainer">
@@ -245,7 +254,7 @@
           </div>
         </div>
 
-        <div class="screenshot-wrapper" id="screenshotWrapper" title="Click anywhere to click that point on the browser">
+        <div class="screenshot-wrapper" id="screenshotWrapper" title="Click anywhere to interact with browser. Keyboard shortcuts Ctrl+C / Ctrl+V / Ctrl+D active." tabindex="0">
           <img id="terminalScreenshot" src="" alt="Live View" class="screenshot-img interactive-canvas" style="display:none;">
           <div id="clickRipple" class="click-ripple"></div>
           <div id="screenshotPlaceholder" class="screenshot-placeholder">
@@ -274,6 +283,9 @@
             <button class="key-chip" data-key="Backspace">⌫ Backspace</button>
             <button class="key-chip" data-key="Escape">Esc</button>
             <button class="key-chip" data-key="Space">Space</button>
+            <button class="key-chip key-ctrl" data-key="Ctrl+C" title="Send Ctrl+C (Interrupt / Copy)">Ctrl+C</button>
+            <button class="key-chip key-ctrl" data-key="Ctrl+V" title="Send Ctrl+V (Paste)">Ctrl+V</button>
+            <button class="key-chip key-ctrl" data-key="Ctrl+D" title="Send Ctrl+D (EOF / Exit)">Ctrl+D</button>
             <button class="key-chip" data-key="ArrowDown">↓ Down</button>
             <button class="key-chip" data-key="ArrowUp">↑ Up</button>
           </div>
