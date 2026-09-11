@@ -391,7 +391,7 @@
     }
 
     runtimeStateValue.textContent = stateName;
-    runtimeReason.textContent = reason || (isConnected ? 'Active (Zero clicks mode)' : 'Standby');
+    runtimeReason.textContent = reason || (isConnected ? 'Workspace Active' : 'Standby');
 
     if (status.headless !== undefined) {
       headlessBadge.textContent = `Headless: ${status.headless ? 'ON' : 'OFF'}`;

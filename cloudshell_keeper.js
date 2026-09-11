@@ -271,39 +271,87 @@ function detectExecutablePath() {
   }
 
   async function sendTerminalCommand(cmd) {
-    log(`Preparing to send command: "${cmd}" to Cloud Shell terminal...`);
+    log(`Preparing to send command: "${cmd}" to workspace terminal...`);
 
     try {
+      let focused = false;
+
+      // Check if Replit Console/Shell tab exists and click it
+      try {
+        const consoleTabs = page.locator('button, [role="tab"], div').filter({ hasText: /^(Console|Shell)$/i });
+        if ((await consoleTabs.count()) > 0) {
+          const tab = consoleTabs.first();
+          if (await tab.isVisible().catch(() => false)) {
+            await tab.click({ timeout: 2000 }).catch(() => {});
+            await sleep(300);
+          }
+        }
+      } catch (_) {}
+
+      // If command is 'run', check for Replit Run button
+      if (cmd && cmd.trim().toLowerCase() === 'run') {
+        try {
+          const runBtn = page.locator('button[data-cy="run-button"], button[aria-label="Run"], button').filter({ hasText: /^Run$/i }).first();
+          if ((await runBtn.count()) > 0 && (await runBtn.isVisible().catch(() => false))) {
+            await runBtn.click({ timeout: 3000 }).catch(() => {});
+            log('✅ Clicked Replit Run button successfully!');
+            return true;
+          }
+        } catch (_) {}
+      }
+
       // Strategy 1: Focus xterm helper textarea if present
-      const textarea = page.locator('textarea.xterm-helper-textarea, .xterm-helper-textarea, textarea').first();
-      if (await textarea.count()) {
-        await textarea.focus({ timeout: 5000 }).catch(() => {});
-        await textarea.click({ timeout: 5000 }).catch(() => {});
+      const textarea = page.locator(
+        'textarea.xterm-helper-textarea, .xterm-helper-textarea, .terminal textarea, [role="terminal"] textarea, div[class*="terminal"] textarea, textarea'
+      ).first();
+      if ((await textarea.count()) > 0) {
+        await textarea.focus({ timeout: 4000 }).catch(() => {});
+        await textarea.click({ timeout: 4000 }).catch(() => {});
+        focused = true;
         log('Focused xterm terminal textarea');
       } else {
         // Strategy 2: Focus xterm screen or terminal container
-        const termScreen = page.locator('.xterm-screen, .xterm, [aria-label*="terminal" i], [role="region"]').first();
-        if (await termScreen.count()) {
-          await termScreen.click({ timeout: 5000 }).catch(() => {});
+        const termScreen = page.locator(
+          '.xterm-screen, .xterm, [aria-label*="terminal" i], [role="terminal"], div[class*="terminal"], .theia-terminal, canvas.xterm-text-layer'
+        ).first();
+        if ((await termScreen.count()) > 0) {
+          await termScreen.click({ timeout: 4000 }).catch(() => {});
+          focused = true;
           log('Clicked terminal container element');
         }
       }
 
-      // Check inside any iframe if Cloud Shell terminal is in an iframe
+      // Check inside any iframe if terminal is in an iframe
       const frames = page.frames();
       for (const frame of frames) {
         try {
-          const frameTextarea = frame.locator('textarea.xterm-helper-textarea, textarea, .xterm-screen').first();
-          if (await frameTextarea.count()) {
+          const frameTextarea = frame.locator('textarea.xterm-helper-textarea, textarea, .xterm-screen, [role="terminal"]').first();
+          if ((await frameTextarea.count()) > 0) {
             await frameTextarea.focus({ timeout: 2000 }).catch(() => {});
             await frameTextarea.click({ timeout: 2000 }).catch(() => {});
+            focused = true;
             log('Focused terminal inside iframe');
             break;
           }
         } catch (_) {}
       }
 
-      await sleep(500);
+      if (!focused) {
+        // Fallback: Check for Replit Run button
+        try {
+          const runBtn = page.locator('button[data-cy="run-button"], button[aria-label="Run"], button').filter({ hasText: /^Run$/i }).first();
+          if ((await runBtn.count()) > 0 && (await runBtn.isVisible().catch(() => false))) {
+            await runBtn.click({ timeout: 3000 }).catch(() => {});
+            log('✅ Clicked Replit Run button (fallback)!');
+            return true;
+          }
+        } catch (_) {}
+
+        log('⚠️ No interactive terminal element found on screen yet.');
+        return false;
+      }
+
+      await sleep(400);
 
       // Type the command with human-like delay and press Enter
       log(`Typing "${cmd}" and pressing Enter...`);
@@ -312,7 +360,7 @@ function detectExecutablePath() {
       await page.keyboard.press('Enter');
       await sleep(500);
 
-      log(`✅ Command "${cmd}" successfully sent to Google Cloud Shell!`);
+      log(`✅ Command "${cmd}" successfully sent!`);
       return true;
     } catch (err) {
       log(`❌ Error sending command to terminal: ${err.message}`);
@@ -357,30 +405,32 @@ function detectExecutablePath() {
   while (true) {
     await sleep(CHECK_INTERVAL_MS);
 
-    log(`🔍 [10-Min Check] Checking Google Cloud Shell session status...`);
+    log(`🔍 [${CHECK_INTERVAL_MS / 60000}-Min Check] Checking session status...`);
 
     if (await checkIsLoginRequired()) {
-      log('⚠️ Google Login required. Waiting for credentials/cookies...');
+      log('⚠️ Login required. Waiting for credentials/cookies...');
       continue;
     }
 
     const isEnded = await checkSessionEnded();
 
     if (isEnded) {
-      log('🚨 Google Cloud Shell session has ENDED / DISCONNECTED!');
+      log('🚨 Session has ENDED / DISCONNECTED!');
       log('🔄 Reconnecting and re-initializing session...');
 
       await attemptReconnect();
 
-      log(`⏳ Waiting 1 minute (${WAIT_AFTER_LOAD_MS / 1000}s) for re-established shell initialization...`);
+      log(`⏳ Waiting ${WAIT_AFTER_LOAD_MS / 1000}s for shell initialization...`);
       await sleep(WAIT_AFTER_LOAD_MS);
 
       await handleAuthorizationAndDialogs();
       await sendTerminalCommand(STARTUP_COMMAND);
 
-      log('✅ Reconnect complete! Returning to 10-minute monitoring loop.');
+      log('✅ Reconnect complete! Returning to monitoring loop.');
     } else {
-      log('🟢 Session is ACTIVE and healthy. (No clicks performed).');
+      await handleAuthorizationAndDialogs();
+      log(`🟢 Workspace/Session is ACTIVE and visible! Auto-running command: "${STARTUP_COMMAND}"...`);
+      await sendTerminalCommand(STARTUP_COMMAND);
     }
   }
 })();

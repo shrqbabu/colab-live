@@ -353,12 +353,12 @@ class UnifiedGoogleWorker extends EventEmitter {
   }
 
   // ============================================================
-  //  CLOUD SHELL MODE LIFECYCLE
-  //  - Wait 1 minute (60s) for container initialization
-  //  - Execute startup command (docker start omniroute)
-  //  - ZERO CLICKS while active
-  //  - Check every 10 mins
-  //  - Auto-reconnect if ended
+  //  CLOUD SHELL / WORKSPACE MODE LIFECYCLE
+  //  - Wait after load (default 60s) for container & terminal initialization
+  //  - Execute startup command (e.g. docker start omniroute)
+  //  - Check every 10 mins (checkIntervalMin)
+  //  - If workspace is visible and active, auto-run the command
+  //  - If session ended/disconnected, auto-reconnect and re-initialize
   // ============================================================
   async runCloudShellLifecycle() {
     const waitSec = this.config.waitAfterLoadSec || 60;
@@ -372,14 +372,14 @@ class UnifiedGoogleWorker extends EventEmitter {
 
         if (state.state === 'LOGIN_REQUIRED' || state.state === 'COOKIE_ERROR') {
           this.isConnected = false;
-          this.log(`Google authentication required (${state.state}: ${state.reason}).`, 'warn');
+          this.log(`Authentication required (${state.state}: ${state.reason}).`, 'warn');
           this.emit('status_change', this.getStatus());
           await this.sleep(30000);
           continue;
         }
 
-        // STEP 1: Wait for Cloud Shell container & terminal to initialize
-        this.log(`⏳ Waiting ${waitSec}s for Cloud Shell terminal initialization...`, 'info');
+        // STEP 1: Wait for container & terminal/workspace to initialize
+        this.log(`⏳ Waiting ${waitSec}s for workspace/terminal initialization...`, 'info');
         this.runtimeState = { state: 'INITIALIZING_WAIT', reason: `Waiting ${waitSec}s after load` };
         this.emit('status_change', this.getStatus());
 
@@ -393,49 +393,50 @@ class UnifiedGoogleWorker extends EventEmitter {
         if (preCheck.state === 'LOGIN_REQUIRED' || preCheck.state === 'COOKIE_ERROR') {
           this.isConnected = false;
           this.runtimeState = preCheck;
-          this.log(`Google authentication required (${preCheck.state}: ${preCheck.reason}).`, 'warn');
+          this.log(`Authentication required (${preCheck.state}: ${preCheck.reason}).`, 'warn');
           this.emit('status_change', this.getStatus());
           await this.sleep(20000);
           continue;
         }
 
-        // STEP 2: Execute startup command
-        this.log(`🚀 Sending startup command: "${cmd}"...`, 'info');
+        // STEP 2: Execute startup command on initial load
+        this.log(`🚀 Initial run: Sending command: "${cmd}"...`, 'info');
         this.runtimeState = { state: 'SENDING_COMMAND', reason: 'typing-startup-cmd' };
         this.emit('status_change', this.getStatus());
 
         const cmdRes = await this.sendTerminalCommand(cmd);
         if (cmdRes && cmdRes.ok) {
           this.isConnected = true;
-          this.runtimeState = { state: 'CONNECTED', reason: 'passive-monitoring-active' };
-          this.log('🔒 Active Cloud Shell session established. ZERO clicks will be performed during session.', 'info');
+          this.runtimeState = { state: 'CONNECTED', reason: 'workspace-active' };
+          this.log('🟢 Active workspace session established and startup command sent.', 'info');
         } else {
           this.isConnected = false;
           this.runtimeState = { state: 'TERMINAL_WAITING', reason: cmdRes ? cmdRes.error || cmdRes.message : 'no-terminal' };
-          this.log('Terminal not ready for typing. Will monitor on next status check.', 'warn');
+          this.log('Terminal not ready yet. Will auto-run on next status check.', 'warn');
         }
         this.emit('status_change', this.getStatus());
 
-        // STEP 3: 10-Minute Passive Polling Loop
+        // STEP 3: 10-Minute Polling & Auto-Execution Loop
         const intervalMs = checkMin * 60 * 1000;
         while (this.isRunning && !this.isStopping) {
           this.lastCheckAt = Date.now();
           this.nextCheckAt = Date.now() + intervalMs;
           this.emit('status_change', this.getStatus());
 
-          this.log(`Next status check in ${checkMin} minutes... (Zero clicks during active session)`, 'info');
+          this.log(`Next status check in ${checkMin} minutes...`, 'info');
           await this.sleep(intervalMs);
 
           if (!this.isRunning || this.isStopping) break;
 
-          this.log(`🔍 [${checkMin}-Min Check] Checking Cloud Shell session status...`, 'info');
+          this.log(`🔍 [${checkMin}-Min Check] Checking workspace session status...`, 'info');
+          await this.handleCloudShellDialogs();
           const check = await this.checkCloudShellState();
           this.lastCheckAt = Date.now();
 
           if (check.state === 'LOGIN_REQUIRED' || check.state === 'COOKIE_ERROR') {
             this.isConnected = false;
             this.runtimeState = check;
-            this.log(`Google authentication required during check (${check.state}).`, 'warn');
+            this.log(`Authentication required during check (${check.state}).`, 'warn');
             this.emit('status_change', this.getStatus());
             break;
           }
@@ -443,21 +444,24 @@ class UnifiedGoogleWorker extends EventEmitter {
           if (check.state === 'DISCONNECTED') {
             this.isConnected = false;
             this.runtimeState = { state: 'DISCONNECTED', reason: check.reason };
-            this.log(`🚨 Cloud Shell session ENDED (${check.reason}). Reconnecting...`, 'warn');
+            this.log(`🚨 Session ENDED (${check.reason}). Reconnecting...`, 'warn');
             this.emit('status_change', this.getStatus());
 
             await this.reconnectCloudShell();
             break; // Restart outer loop
           } else if (check.state === 'CONNECTED') {
             this.isConnected = true;
-            this.runtimeState = { state: 'CONNECTED', reason: 'session-healthy' };
-            this.log('🟢 Cloud Shell session is ACTIVE & healthy. (No clicks performed).', 'info');
+            this.runtimeState = { state: 'CONNECTED', reason: 'workspace-active' };
+            this.log(`🟢 Workspace is ACTIVE & visible! Auto-running command: "${cmd}"...`, 'info');
             this.emit('status_change', this.getStatus());
+
+            // Auto-run command whenever workspace is visible and active
+            await this.sendTerminalCommand(cmd);
           }
         }
       } catch (err) {
         if (!this.isStopping) {
-          this.log(`Cloud Shell loop error: ${err.message}`, 'error');
+          this.log(`Workspace loop error: ${err.message}`, 'error');
           await this.sleep(10000);
         }
       }
@@ -532,7 +536,7 @@ class UnifiedGoogleWorker extends EventEmitter {
     }
   }
 
-  // ── Helper: Cloud Shell State Detection ──
+  // ── Helper: Cloud Shell / Replit / Workspace State Detection ──
   async checkCloudShellState() {
     if (!this.page || this.page.isClosed()) return { state: 'UNKNOWN', reason: 'no-page' };
     try {
@@ -540,7 +544,7 @@ class UnifiedGoogleWorker extends EventEmitter {
         const url = window.location.href || '';
         const body = document.body ? document.body.innerText.toLowerCase() : '';
 
-        // 1. Google Cookie Error / Privacy Settings Block
+        // 1. Google / Platform Cookie Error / Privacy Settings Block
         if (
           url.includes('support.google.com') ||
           url.includes('CookieMismatch') ||
@@ -551,24 +555,26 @@ class UnifiedGoogleWorker extends EventEmitter {
           body.includes('adjust your privacy settings') ||
           body.includes('enable cookies')
         ) {
-          return { state: 'COOKIE_ERROR', reason: 'google-cookie-settings-rejected' };
+          return { state: 'COOKIE_ERROR', reason: 'cookie-settings-rejected' };
         }
 
-        // 2. Google Login / Sign-in required
+        // 2. Login / Sign-in required
         if (
           url.includes('accounts.google.com/signin') ||
           url.includes('accounts.google.com/ServiceLogin') ||
           url.includes('accounts.google.com/InteractiveLogin') ||
           url.includes('accounts.google.com/AccountChooser') ||
           url.includes('accounts.google.com/v3/signin') ||
+          url.includes('replit.com/login') ||
           body.includes('sign in with your google account') ||
           body.includes('choose an account') ||
-          body.includes('sign in to continue')
+          body.includes('sign in to continue') ||
+          body.includes('log in to replit')
         ) {
-          return { state: 'LOGIN_REQUIRED', reason: 'google-login-url' };
+          return { state: 'LOGIN_REQUIRED', reason: 'login-url' };
         }
 
-        // 3. Disconnected / Session ended
+        // 3. Disconnected / Session ended / Sleeping
         const disconnectTerms = [
           'session terminated',
           'session disconnected',
@@ -579,16 +585,28 @@ class UnifiedGoogleWorker extends EventEmitter {
           'your session was disconnected',
           'session expired',
           'inactive session',
+          'repl is sleeping',
+          'repl offline',
+          'waking up your repl',
         ];
 
         for (const t of disconnectTerms) {
           if (body.includes(t)) return { state: 'DISCONNECTED', reason: 'matched: ' + t };
         }
 
-        const buttons = Array.from(document.querySelectorAll('button, [role="button"], a.mat-button'));
+        const buttons = Array.from(document.querySelectorAll('button, [role="button"], a.mat-button, .mat-raised-button'));
         for (const b of buttons) {
           const txt = (b.textContent || '').trim().toLowerCase();
-          if (txt === 'reconnect' || txt.includes('reconnect to cloud shell') || txt === 'restart cloud shell' || txt === 'try again') {
+          if (
+            txt === 'reconnect' ||
+            txt.includes('reconnect to cloud shell') ||
+            txt === 'restart cloud shell' ||
+            txt === 'start cloud shell' ||
+            txt === 'try again' ||
+            txt === 'retry' ||
+            txt === 'wake up repl' ||
+            txt === 'wake up'
+          ) {
             const rect = b.getBoundingClientRect();
             if (rect.width > 0 && rect.height > 0) {
               return { state: 'DISCONNECTED', reason: 'reconnect-btn-visible' };
@@ -596,9 +614,9 @@ class UnifiedGoogleWorker extends EventEmitter {
           }
         }
 
-        // 4. Authenticated & Terminal Ready
+        // 4. Authenticated & Terminal / Workspace Ready
         const hasTerminal = !!document.querySelector(
-          '.xterm-screen, textarea.xterm-helper-textarea, .terminal textarea, canvas.xterm-text-layer'
+          '.xterm-screen, textarea.xterm-helper-textarea, .terminal textarea, canvas.xterm-text-layer, [role="terminal"], div[class*="terminal"]'
         );
         if (hasTerminal) {
           return { state: 'CONNECTED', reason: 'terminal-dom-active' };
@@ -608,14 +626,22 @@ class UnifiedGoogleWorker extends EventEmitter {
         for (const f of iframes) {
           try {
             const doc = f.contentDocument || (f.contentWindow && f.contentWindow.document);
-            if (doc && doc.querySelector('.xterm-screen, textarea.xterm-helper-textarea, .terminal textarea')) {
+            if (doc && doc.querySelector('.xterm-screen, textarea.xterm-helper-textarea, .terminal textarea, canvas.xterm-text-layer')) {
               return { state: 'CONNECTED', reason: 'iframe-terminal-active' };
             }
           } catch (_) {}
         }
 
+        // Replit / Cloud Shell workspace indicators
+        const hasWorkspace = !!document.querySelector(
+          '[data-cy="workspace"], .workspace, [aria-label*="workspace" i], .monaco-workbench, .theia-ApplicationShell, button[data-cy="run-button"]'
+        );
+        if (hasWorkspace) {
+          return { state: 'CONNECTED', reason: 'workspace-dom-active' };
+        }
+
         // 5. Initializing / Loading
-        if (url.includes('shell.cloud.google.com') || url.includes('console.cloud.google.com')) {
+        if (url.includes('shell.cloud.google.com') || url.includes('console.cloud.google.com') || url.includes('replit.com')) {
           return { state: 'LOADING', reason: 'page-initializing' };
         }
 
@@ -754,7 +780,7 @@ class UnifiedGoogleWorker extends EventEmitter {
     }).catch(() => null);
   }
 
-  // ── Cloud Shell Dialogs & Reconnection ──
+  // ── Workspace / Cloud Shell Dialogs & Reconnection ──
   async handleCloudShellDialogs() {
     if (!this.page || this.page.isClosed()) return;
     try {
@@ -764,16 +790,16 @@ class UnifiedGoogleWorker extends EventEmitter {
       });
       if ((await consentBtns.count()) > 0) {
         await consentBtns.first().click({ timeout: 3000 }).catch(() => {});
-        this.log('Dismissed Google cookie / consent dialog', 'info');
+        this.log('Dismissed cookie / consent dialog', 'info');
         await this.sleep(1000);
       }
 
-      const dialogBtns = this.page.locator('button, [role="button"], a.mat-button, .mat-button').filter({
-        hasText: /authorize|start cloud shell|open terminal|continue|agree|got it|start/i,
+      const dialogBtns = this.page.locator('button, [role="button"], a.mat-button, .mat-button, .mat-raised-button').filter({
+        hasText: /authorize|start cloud shell|open terminal|continue|agree|got it|start|wake up/i,
       });
       if ((await dialogBtns.count()) > 0) {
         await dialogBtns.first().click({ timeout: 4000 }).catch(() => {});
-        this.log('Clicked Cloud Shell startup/authorize dialog button', 'info');
+        this.log('Clicked startup/authorize dialog button', 'info');
         await this.sleep(2000);
       }
     } catch (_) {}
@@ -781,14 +807,14 @@ class UnifiedGoogleWorker extends EventEmitter {
 
   async reconnectCloudShell() {
     if (!this.page || this.page.isClosed()) return false;
-    this.log('Attempting Cloud Shell reconnection...', 'info');
+    this.log('Attempting reconnection...', 'info');
     try {
       const reconnectBtns = this.page.locator('button, [role="button"]').filter({
-        hasText: /reconnect|restart|start cloud shell|try again/i,
+        hasText: /reconnect|restart|start cloud shell|try again|wake up repl|wake up/i,
       });
       if ((await reconnectBtns.count()) > 0) {
         await reconnectBtns.first().click({ timeout: 5000 });
-        this.log('Clicked Reconnect button', 'info');
+        this.log('Clicked Reconnect / Wake up button', 'info');
         await this.sleep(3000);
         return true;
       }
@@ -801,7 +827,7 @@ class UnifiedGoogleWorker extends EventEmitter {
     }
   }
 
-  // ── Terminal Remote Command Sender ──
+  // ── Terminal / Workspace Remote Command Sender ──
   async sendTerminalCommand(cmd) {
     if (!this.page || this.page.isClosed()) {
       return { ok: false, message: 'No active browser page' };
@@ -819,23 +845,55 @@ class UnifiedGoogleWorker extends EventEmitter {
     try {
       let focused = false;
 
-      const textarea = this.page.locator('textarea.xterm-helper-textarea, .xterm-helper-textarea, .terminal textarea').first();
+      // 1. If in Replit, check for Console or Shell tab and activate it if needed
+      try {
+        const consoleTabs = this.page.locator('button, [role="tab"], div').filter({ hasText: /^(Console|Shell)$/i });
+        if ((await consoleTabs.count()) > 0) {
+          const tab = consoleTabs.first();
+          if (await tab.isVisible().catch(() => false)) {
+            await tab.click({ timeout: 2000 }).catch(() => {});
+            await this.sleep(300);
+          }
+        }
+      } catch (_) {}
+
+      // 2. If command is 'run' or repl needs run trigger, check for Replit Run button
+      if (commandToRun.trim().toLowerCase() === 'run') {
+        try {
+          const runBtn = this.page.locator('button[data-cy="run-button"], button[aria-label="Run"], button').filter({ hasText: /^Run$/i }).first();
+          if ((await runBtn.count()) > 0 && (await runBtn.isVisible().catch(() => false))) {
+            await runBtn.click({ timeout: 3000 }).catch(() => {});
+            this.lastCommandExecuted = 'Run';
+            this.lastCommandTime = Date.now();
+            this.log('✅ Clicked Replit Run button successfully!', 'info');
+            return { ok: true, command: 'Run' };
+          }
+        } catch (_) {}
+      }
+
+      // 3. Focus interactive terminal element
+      const textarea = this.page.locator(
+        'textarea.xterm-helper-textarea, .xterm-helper-textarea, .terminal textarea, [role="terminal"] textarea, div[class*="terminal"] textarea, div[data-testid*="terminal"] textarea'
+      ).first();
       if ((await textarea.count()) > 0) {
         await textarea.focus({ timeout: 4000 }).catch(() => {});
         await textarea.click({ timeout: 4000 }).catch(() => {});
         focused = true;
       } else {
-        const termScreen = this.page.locator('.xterm-screen, .xterm, [aria-label*="terminal" i]').first();
+        const termScreen = this.page.locator(
+          '.xterm-screen, .xterm, [aria-label*="terminal" i], [role="terminal"], div[class*="terminal"], .theia-terminal, canvas.xterm-text-layer'
+        ).first();
         if ((await termScreen.count()) > 0) {
           await termScreen.click({ timeout: 4000 }).catch(() => {});
           focused = true;
         }
       }
 
+      // 4. Check inside any frames/iframes
       const frames = this.page.frames();
       for (const frame of frames) {
         try {
-          const frameTextarea = frame.locator('textarea.xterm-helper-textarea, textarea, .xterm-screen').first();
+          const frameTextarea = frame.locator('textarea.xterm-helper-textarea, textarea, .xterm-screen, [role="terminal"]').first();
           if ((await frameTextarea.count()) > 0) {
             await frameTextarea.focus({ timeout: 2000 }).catch(() => {});
             await frameTextarea.click({ timeout: 2000 }).catch(() => {});
@@ -846,6 +904,18 @@ class UnifiedGoogleWorker extends EventEmitter {
       }
 
       if (!focused) {
+        // Fallback: Check if Replit Run button is present
+        try {
+          const runBtn = this.page.locator('button[data-cy="run-button"], button[aria-label="Run"], button').filter({ hasText: /^Run$/i }).first();
+          if ((await runBtn.count()) > 0 && (await runBtn.isVisible().catch(() => false))) {
+            await runBtn.click({ timeout: 3000 }).catch(() => {});
+            this.lastCommandExecuted = 'Run';
+            this.lastCommandTime = Date.now();
+            this.log('✅ Clicked Replit Run button (fallback)!', 'info');
+            return { ok: true, command: 'Run' };
+          }
+        } catch (_) {}
+
         this.log('⚠️ No interactive terminal element found on screen yet.', 'warn');
         return { ok: false, error: 'Terminal element not found' };
       }
