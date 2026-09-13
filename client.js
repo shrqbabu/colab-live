@@ -251,7 +251,8 @@
   if (quickFillBtn) {
     quickFillBtn.addEventListener('click', () => {
       loginEmail.value = 'admin@cloudshell.pro';
-      loginPassword.value = 'password123';
+      loginPassword.value = '';
+      loginPassword.focus();
     });
   }
 

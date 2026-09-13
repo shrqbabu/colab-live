@@ -1,3 +1,4 @@
+require('./load-env');
 // ============================================================
 //  ⚡ Vercel Serverless All-in-One Gateway & Static Server
 //  Cloud Shell & Colab Unified Automation
@@ -371,8 +372,10 @@ module.exports = async function handler(req, res) {
         const email = body.email || '';
         const password = body.password || '';
 
-        if (email === (conf.auth?.email || 'admin@cloudshell.pro') &&
-            password === (conf.auth?.password || 'password123')) {
+        const expectedEmail = (process.env.ADMIN_EMAIL || conf.auth?.email || 'admin@cloudshell.pro').trim();
+        const expectedPassword = (process.env.ADMIN_PASSWORD || conf.auth?.password || 'password123').trim();
+
+        if (email === expectedEmail && password === expectedPassword) {
           const token = generateToken();
           authTokens.set(token, { email, created: Date.now() });
           return sendResponse(res, 200, { ok: true, token });
@@ -477,7 +480,11 @@ module.exports = async function handler(req, res) {
     // Config & Cookies
     if (apiPath === '/config' && req.method === 'GET') {
       const conf = worker.loadConfig();
-      return sendResponse(res, 200, { ok: true, config: conf });
+      const safeConf = { ...conf };
+      if (safeConf.auth && safeConf.auth.password) {
+        delete safeConf.auth.password;
+      }
+      return sendResponse(res, 200, { ok: true, config: safeConf });
     }
 
     if (apiPath === '/config' && req.method === 'POST') {

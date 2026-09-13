@@ -1,3 +1,4 @@
+require('./load-env');
 // ============================================================
 //  🔑 Google Cloud Shell Login Helper — Headed Login & Profile Saver
 //  Usage: node cloudshell-login.js

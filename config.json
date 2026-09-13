@@ -1,4 +1,4 @@
-{
+﻿{
   "mode": "cloudshell",
   "cloudShellUrl": "https://shell.cloud.google.com/?show=terminal",
   "colabUrl": "https://colab.research.google.com/",
@@ -9,9 +9,5 @@
   "colabAutoRun": true,
   "port": 8080,
   "headless": true,
-  "autoStart": false,
-  "auth": {
-    "email": "admin@cloudshell.pro",
-    "password": "password123"
-  }
+  "autoStart": false
 }

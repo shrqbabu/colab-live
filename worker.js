@@ -1,3 +1,4 @@
+require('./load-env');
 // ============================================================
 //  🚀 UNIFIED GOOGLE WORKER — Colab & Cloud Shell Automation
 //  Architecture: Persistent Chromium Profile as Primary Source

@@ -1,3 +1,4 @@
+require('./load-env');
 // ============================================================
 //  🌐 GOOGLE CLOUD & COLAB MANAGER — Web Server & API
 // ============================================================
@@ -143,9 +144,12 @@ const server = http.createServer(async (req, res) => {
       const email = body.email || '';
       const password = body.password || '';
 
+      const expectedEmail = (process.env.ADMIN_EMAIL || conf.auth?.email || 'admin@cloudshell.pro').trim();
+      const expectedPassword = (process.env.ADMIN_PASSWORD || conf.auth?.password || 'password123').trim();
+
       if (
-        email === (conf.auth?.email || 'admin@cloudshell.pro') &&
-        password === (conf.auth?.password || 'password123')
+        email === expectedEmail &&
+        password === expectedPassword
       ) {
         const token = generateToken();
         activeSessions.add(token);
@@ -423,7 +427,11 @@ const server = http.createServer(async (req, res) => {
   // ── Get & Update Config ──
   if (pathname === '/api/config' && method === 'GET') {
     const conf = worker.loadConfig();
-    sendJson(res, 200, { ok: true, config: conf });
+    const safeConf = { ...conf };
+    if (safeConf.auth && safeConf.auth.password) {
+      delete safeConf.auth.password;
+    }
+    sendJson(res, 200, { ok: true, config: safeConf });
     return;
   }
 

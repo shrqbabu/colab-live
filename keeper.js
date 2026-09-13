@@ -1,3 +1,4 @@
+require('./load-env');
 // ============================================================
 //  🤖 UNIFIED GOOGLE 24/7 KEEPER — CLI Runner (Cloud Shell & Colab)
 //  Usage: node keeper.js
