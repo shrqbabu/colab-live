@@ -1,3 +1,15 @@
+---
+title: Google Cloud Shell & Colab Manager
+emoji: 🌐
+colorFrom: blue
+colorTo: green
+sdk: gradio
+sdk_version: 5.29.0
+app_file: app.py
+app_port: 7860
+pinned: false
+---
+
 # 🌐 Google Cloud Shell & Colab 24/7 Automation Manager
 
 Playwright-based automation system to keep **Google Cloud Shell** and **Google Colab** running 24/7 with persistent profiles, dynamic links, and real-time dashboard controls.
